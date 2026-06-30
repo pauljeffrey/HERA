@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+structured_clinical_data/output/
+soap_notes/output/
