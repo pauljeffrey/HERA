@@ -1,60 +1,134 @@
 services:
+
   postgres:
+
+    profiles: ["local"]
+
     image: pgvector/pgvector:pg16
+
     environment:
+
       POSTGRES_USER: hera
+
       POSTGRES_PASSWORD: hera
+
       POSTGRES_DB: hera
+
     ports:
+
       - "5433:5432"
+
     volumes:
+
       - hera_pgdata:/var/lib/postgresql/data
-      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+
+      - ./app/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+
     healthcheck:
+
       test: ["CMD-SHELL", "pg_isready -U hera"]
+
       interval: 5s
+
       timeout: 5s
+
       retries: 5
+
+
 
   redis:
+
     image: redis:7-alpine
-    command: redis-server --requirepass redispassword
+
     ports:
+
       - "6380:6379"
+
+    volumes:
+
+      - hera_redisdata:/data
+
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redispassword", "ping"]
+
+      test: ["CMD", "redis-cli", "ping"]
+
       interval: 5s
-      timeout: 3s
+
+      timeout: 5s
+
       retries: 5
 
-  backend:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      DATABASE_URL: postgresql+asyncpg://hera:hera@postgres:5432/hera
-      REDIS_URL: redis://:redispassword@redis:6379/0
-      MOCK_MODE: "false"
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-  worker:
-    build: .
+
+  backend:
+
+    build:
+
+      context: ..
+
+      dockerfile: backend/Dockerfile
+
+    ports:
+
+      - "8010:8000"
+
+    dns:
+
+      - 8.8.8.8
+
+      - 8.8.4.4
+
+    env_file:
+
+      - ../.env
+
     environment:
-      DATABASE_URL: postgresql+asyncpg://hera:hera@postgres:5432/hera
-      REDIS_URL: redis://:redispassword@redis:6379/0
-      MOCK_MODE: "false"
+
+      DATABASE_MODE: ${DATABASE_MODE:-supabase}
+
+      PREPOPULATE_DB: ${PREPOPULATE_DB:-if_empty}
+
+      HERA_RELOAD: "1"
+
+      HERA_RELOAD_DIR: /app/app
+
+      PATIENT_TRAJECTORIES_PATH: /workspace/clinical_data_gen/structured_clinical_data/output/20260630T033940Z/datasets/patient_trajectories.json
+
+      SOAP_NOTES_PATH: /workspace/clinical_data_gen/soap_notes/output/20260630T050119Z/datasets/soap_progress_notes.json
+
+      LOCAL_DB_HOST: postgres
+
+      LOCAL_DB_PORT: 5432
+
+      REDIS_URL: redis://redis:6379/0
+
+      PYTHONPATH: /workspace:/app
+
+      HERA_REPO_ROOT: /workspace
+
+    volumes:
+
+      - ..:/workspace:ro
+
+      - ./app:/app/app
+
     depends_on:
+
       postgres:
+
         condition: service_healthy
+
+        required: false
+
       redis:
+
         condition: service_healthy
-    command: arq app.workers.arq_app.WorkerSettings
+
+
 
 volumes:
+
   hera_pgdata:
+
+  hera_redisdata:
+

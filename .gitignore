@@ -3,5 +3,5 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
-structured_clinical_data/output/
-soap_notes/output/
+clinical_data_gen/structured_clinical_data/output/
+clinical_data_gen/soap_notes/output/

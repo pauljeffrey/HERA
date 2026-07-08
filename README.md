@@ -1,242 +1,169 @@
-# HERA — Healthcare Eligibility & Reasoning Agent
+# HERA
 
-HERA is an agentic workflow that automates extraction and synthesis of unstructured clinical text to match patients with active cardiovascular, ICU, and oncology clinical trials.
+Healthcare Eligibility & Reasoning Agent — synthetic clinical trial matching over generated patient trajectories and SOAP notes.
 
-Traditional cohort discovery and trial matching rely on manual, time-consuming chart reviews of complex EHR data, clinician notes, and imaging reports. HERA replaces much of that manual work with structured reasoning over longitudinal patient trajectories.
+**Not for clinical use.** All patient data is synthetic.
 
-## Problem
+---
 
-Clinical trial matching requires:
+## What it does
 
-- Parsing heterogeneous EHR fields, progress notes, and diagnostic reports
-- Tracking longitudinal changes in vitals, labs, medications, and diagnoses
-- Evaluating inclusion/exclusion criteria against evolving patient states
+1. **Generate data** — `clinical_data_gen/` produces structured trajectories and SOAP progress notes via OpenAI Batch API.
+2. **Load data** — Backend prepopulates Supabase (or local Postgres) on startup.
+3. **Match trials** — Three-tier funnel: FTS → pgvector + math guard → Agent 2 deep evaluation.
+4. **Audit** — Four-pane dashboard with copilot for cohort exploration and clinician overrides.
 
-HERA targets this gap with synthetic and real patient trajectories, structured schemas, and LLM-assisted reasoning pipelines.
+---
 
-## Architecture
-
-```mermaid
-flowchart LR
-    subgraph ingest [Data Layer]
-        EHR[EHR / Notes / Imaging]
-        Synth[Synthetic Trajectory Generator]
-    end
-
-    subgraph core [HERA Core]
-        Extract[Clinical Extraction]
-        Reason[Eligibility Reasoning]
-        Match[Trial Matching]
-    end
-
-    subgraph out [Outputs]
-        Cohort[Cohort Discovery]
-        Report[Eligibility Reports]
-    end
-
-    EHR --> Extract
-    Synth --> Extract
-    Extract --> Reason
-    Reason --> Match
-    Match --> Cohort
-    Match --> Report
-```
-
-### Specialty coverage
-
-Synthetic and real-world cohorts emphasize three domains:
-
-| Specialty | Target share | Example scenarios |
-|-----------|--------------|-------------------|
-| Cardiovascular | 50% | HFrEF titration, acute MI, post-PCI management |
-| Oncology | 35% | Chemotherapy cardiotoxicity, advanced solid tumors |
-| ICU / Critical Care | 15% | Septic shock, cardiogenic shock, post-CABG recovery |
-
-## Project structure
+## Repository layout
 
 ```
 HERA/
-├── README.md
-├── requirements.txt
-├── .env                          # API keys and runtime config (not committed)
-└── structured_clinical_data/     # Synthetic dataset generation engine
-    ├── conditions.py             # Clinical scenario library by specialty
-    ├── schemas.py                # Pydantic models (PatientTrajectory, Encounter, …)
-    ├── engine.py                 # Task planning, batch I/O, parsing
-    ├── generate.py               # CLI entry point
-    └── output/                   # Generated batch inputs and datasets (gitignored)
-├── soap_notes/                   # Structured → SOAP note conversion
-    ├── engine.py                 # convert_structured_to_soap + batch pipeline
-    ├── generate.py               # CLI entry point
-    └── output/
-└── db_script/
-    ├── schema.sql                # Supabase table definition
-    └── push_notes.py             # Load SOAP JSON into Supabase
+├── clinical_data_gen/          # Synthetic data generators
+│   ├── structured_clinical_data/
+│   └── soap_notes/
+├── backend/
+│   └── app/
+│       ├── api/v1/             # HTTP routes only
+│       ├── agents/             # Agent 2 + audit copilot (Pydantic AI)
+│       ├── models/             # Pydantic schemas (ledger, search_payload, API types)
+│       ├── services/           # Business logic (search, funnel, pipeline, chat agent)
+│       └── workers/            # Tier 3 Modal / API fallback
+├── frontend/                   # Next.js command center + audit dashboard
+└── db_script/                  # Supabase push utilities
 ```
 
-## Getting started
+---
 
-### 1. Install dependencies
+## Agents
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-pip install -r requirements.txt
-```
+| Agent | Module | Role |
+|-------|--------|------|
+| **Agent 1** | `agents/chat_agent.py` | Parses clinician intent → FTS keywords, semantic query, numeric constraints (`models/search_payload.py`) |
+| **Agent 2** | `agents/analysis_agent.py` | Deep eligibility audit with vitals/labs/investigation tools → `PatientTrialAudit` |
+| **Audit copilot** | `agents/audit_analysis_agent.py` | Exploratory Q&A inside a matching task; can apply overrides |
 
-### 2. Configure environment
+Tier 3 runs via `workers/modal_agent.py` (Modal GPU batch with OpenAI fallback).
 
-Create or update `.env` in the project root:
+---
+
+## API ↔ Frontend
+
+| Frontend | Backend |
+|----------|---------|
+| `POST /chat` | General orchestrator chat (Agent 1) |
+| `POST /trials/match` | Start background matching pipeline |
+| `GET /tasks/{id}` | Poll task progress (sidebar, 3s interval) |
+| `GET /audit/tasks/{id}` | Audit dashboard payload |
+| `POST /audit/tasks/{id}/copilot` | Audit copilot chat |
+| `POST /audit/tasks/{id}/override` | Clinician override |
+| `GET /criteria/prompts` | Criteria dropdown in command center |
+
+**Pages:** `/` (Command Center), `/audit/[task_id]` (Audit Dashboard).
+
+Set `NEXT_PUBLIC_API_URL=http://127.0.0.1:8010/api/v1` in `frontend/.env.local`.
+
+---
+
+## Quick start
+
+### 1. Environment
+
+Copy `.env.example` → `.env` at repo root:
 
 ```env
-OPENAI_API_KEY=your_key_here
-MODEL_NAME=gpt-4o-mini
-DATASET_TARGET_COUNT=5000
-DATASET_OUTPUT_DIR=structured_clinical_data/output
+OPENAI_API_KEY=sk-...
+DATABASE_MODE=supabase
+SUPABASE_URL=https://<project>.supabase.co
+SUPABASE_SECRET_KEY=<service_role_key>
+SUPABASE_DB_HOST=db.<project>.supabase.co
+SUPABASE_DB_PASSWORD=<db_password>
 ```
 
-`gpt-4o-mini` is the default for cost-efficient batch generation. The [OpenAI Batch API](https://developers.openai.com/api/docs/guides/batch) runs asynchronously with **50% lower cost** than synchronous requests and separate rate limits.
+Apply `backend/app/db/schema.sql` once in the Supabase SQL editor.
 
-### 3. Generate synthetic trajectories
-
-**Preview the plan and write batch input (no API spend):**
+### 2. Backend
 
 ```bash
-python -m structured_clinical_data.generate --count 5000 --dry-run
+cd backend
+docker compose up --build
 ```
 
-**Submit a batch job:**
+Startup prepopulates the DB when empty (`PREPOPULATE_DB=if_empty`, default).
+
+**Embeddings (Tier 2 search):** from `backend/` on the host:
 
 ```bash
-python -m structured_clinical_data.generate --count 5000 --submit
+pip install -r requirements-ingest.txt
+python -m scripts.ingest_ehr --reset
 ```
 
-**Submit and wait until completion:**
+Health: `http://127.0.0.1:8010/health`
+
+**Local Postgres:** `DATABASE_MODE=local` then `docker compose --profile local up --build`.
+
+### 3. Frontend
 
 ```bash
-python -m structured_clinical_data.generate --count 5000 --submit --wait
+cd frontend
+npm install
+npm run dev
 ```
 
-**Collect results from an existing batch:**
+Open `http://localhost:3000`.
+
+### 4. End-to-end flow
+
+1. Open Command Center → paste trial criteria (or pick from dropdown).
+2. Sidebar polls until task completes → click **Explore Audit Ledger**.
+3. Review timeline, metrics, ledger; toggle copilot or overrule a verdict.
+
+---
+
+## Matching pipeline
+
+```
+User prompt
+    → Agent 1 (search plan)
+    → Tier 1 FTS (Postgres tsvector)
+    → Tier 2 pgvector + math_guard (windowed numeric checks)
+    → Tier 3 Agent 2 (per-patient audit ledger)
+    → trial_matching_tasks.result_summary
+    → Audit dashboard
+```
+
+Key modules: `services/search.py`, `services/math_guard.py`, `services/funnel_orchestrator.py`, `services/match_pipeline.py`, `services/task_storage.py`.
+
+---
+
+## Tests
 
 ```bash
-python -m structured_clinical_data.generate --batch-id batch_abc123 --wait
+cd backend
+pytest tests/test_math_guard.py -v          # unit (no DB)
+pytest tests/ -v                            # includes FTS/vector if DB creds set
 ```
 
-Each run creates a timestamped folder under `structured_clinical_data/output/` containing:
+---
 
-- `batches/batch_input.jsonl` — OpenAI Batch request file
-- `batches/{batch_id}_manifest.json` — job metadata
-- `datasets/patient_trajectories.json` — validated records in one JSON file
-- `datasets/parse_failures.json` — validation failures (if any)
-
-## Synthetic data engine
-
-The generator in `structured_clinical_data/` is a small pipeline:
-
-1. **Task planner** (`engine.plan_tasks`) — Allocates records across specialties (50% / 35% / 15%) and picks a random scenario from `conditions.py`.
-2. **Batch input** (`engine.write_batch_input`) — Writes one OpenAI Batch request per patient with the system prompt and strict JSON schema.
-3. **Batch runner** — Uploads the JSONL, polls status, and downloads results per OpenAI batch guidelines.
-4. **Parser** — Validates each response with `PatientTrajectory` and writes the final dataset.
-
-### Data schema
-
-Each record is a longitudinal `PatientTrajectory`:
-
-- Demographics and trial-relevant inclusion/exclusion summary
-- 2–4 chronologically ordered `Encounter` objects with vitals, labs, medications, procedures, diagnoses, and search tags
-- Physiological coherence enforced via prompt rules and Pydantic validation
-
-See `structured_clinical_data/schemas.py` for the canonical schema.
-
-## SOAP progress notes
-
-Convert structured trajectories into unstructured EHR-style SOAP notes.
-
-Each patient timeline entry becomes one note. The converter passes the **current encounter** plus **all prior encounters** so the LLM can write realistic clinical continuity (e.g. "status post PCI on day 3").
-
-**Single note (sync API):**
-
-```python
-from soap_notes import convert_structured_to_soap
-
-note = convert_structured_to_soap(patient_profile, target_encounter_idx=1)
-```
-
-**Batch conversion (recommended at scale):**
+## Data generation (optional)
 
 ```bash
-python -m soap_notes.generate \
-  --input structured_clinical_data/output/<run>/datasets/patient_trajectories.json \
-  --submit --wait
+cd clinical_data_gen/structured_clinical_data
+python generate.py --count 50
+
+cd ../soap_notes
+python generate.py
 ```
 
-Output: `soap_notes/output/<run>/datasets/soap_progress_notes.json`
+Outputs land under `clinical_data_gen/*/output/`. Point `PATIENT_TRAJECTORIES_PATH` / `SOAP_NOTES_PATH` in `.env` if paths differ.
 
-```json
-{
-  "count": 12000,
-  "notes": [
-    {
-      "patient_id": "PT-000001",
-      "encounter_id": "ENC-001",
-      "encounter_index": 0,
-      "encounter_type": "First Presentation",
-      "specialty_key": "cardiovascular_care",
-      "specialty_label": "Cardiovascular",
-      "scenario_brief": "...",
-      "soap_note": "SUBJECTIVE:\n..."
-    }
-  ]
-}
-```
+---
 
-The payload sent to the model includes a slice of `CLINICAL_CONDITION` from `conditions.py` for specialty context.
+## Legacy / unused routes
 
-## Supabase upload
+These exist for demos and tooling but are not wired in the UI:
 
-1. Run `db_script/schema.sql` in the Supabase SQL editor.
-2. Set remote credentials in `.env`:
-
-```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_KEY=your_service_role_key
-SUPABASE_NOTES_TABLE=clinical_progress_notes
-```
-
-3. Push the aggregated SOAP JSON:
-
-```bash
-python -m db_script.push_notes \
-  --input soap_notes/output/<run>/datasets/soap_progress_notes.json
-```
-
-Rows are upserted on `(patient_id, encounter_index)` by default. Pass `--insert` for insert-only.
-
-## Environment variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `OPENAI_API_KEY` | OpenAI API key | Required |
-| `MODEL_NAME` | Chat model for batch requests | `gpt-4o-mini` |
-| `DATASET_TARGET_COUNT` | Default `--count` when omitted | `5000` |
-| `DATASET_OUTPUT_DIR` | Output root for batch artifacts | `structured_clinical_data/output` |
-| `SOAP_OUTPUT_DIR` | Output root for SOAP batch runs | `soap_notes/output` |
-| `SUPABASE_URL` | Supabase project URL | Required for db push |
-| `SUPABASE_SERVICE_KEY` | Service role key for writes | Required for db push |
-| `SUPABASE_NOTES_TABLE` | Target table name | `clinical_progress_notes` |
-
-## Cost and scale notes
-
-- **Batch API** is recommended for 5k–10k records: lower cost, higher throughput, 24-hour completion window.
-- One batch request = one patient trajectory, keeping context size small and validation straightforward.
-- OpenAI allows up to **50,000 requests per batch** and **200 MB** input files.
-- Use `--dry-run` to inspect specialty distribution and JSONL format before spending credits.
-
-## Disclaimer
-
-Synthetic records produced by HERA are for **research, development, and evaluation only**. They must not be used as real patient data or for clinical decision-making.
-
-## License
-
-Add your license here.
+- `POST /trials/match/legacy` — mock funnel
+- `GET /patients`, `GET /audit/logs/{patient_id}` — demo patient API
+- `GET /criteria/random` — random criterion picker

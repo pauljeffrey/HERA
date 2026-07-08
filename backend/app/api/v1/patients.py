@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
-from app.models.schemas import PatientSnapshotResponse
-from app.services.mock_data import DEMO_PATIENTS, TRIAL_ID, get_patient_snapshot
+from app.models.patients import PatientSnapshotResponse
+from app.services.clinical.mock_data import DEMO_PATIENTS, TRIAL_ID, get_patient_snapshot
 
 router = APIRouter(prefix="/patients", tags=["patients"])
 
@@ -27,4 +27,3 @@ async def get_encounter(patient_id: str, encounter_index: int, trial_id: str = T
         if enc.encounter_index == encounter_index:
             return enc
     raise HTTPException(status_code=404, detail="Encounter not found")
-

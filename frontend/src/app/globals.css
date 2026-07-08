@@ -22,5 +22,55 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+.prose img {
+  margin: 0.75rem 0;
+  border-radius: 0.75rem;
+  max-width: 100%;
+  border: 1px solid rgb(226 232 240 / 0.6);
+}
+
+@media (prefers-color-scheme: dark) {
+  .prose img {
+    border-color: rgb(30 41 59);
+  }
+}
+
+/* Shared panel/typography tokens — the frosted-card + section-label look
+   used throughout the audit dashboard and command center, previously
+   copy-pasted as long Tailwind class strings in every component. */
+@layer components {
+  .panel {
+    @apply rounded-2xl border border-slate-200/60 bg-white/70 p-4 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/50;
+  }
+
+  .panel-row {
+    @apply rounded-xl border border-slate-200/60 bg-white/70 p-3 dark:border-slate-800 dark:bg-slate-900/50;
+  }
+
+  .panel-heading {
+    @apply mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500;
+  }
+
+  .panel-label {
+    @apply text-xs font-semibold uppercase tracking-wide text-slate-500;
+  }
+
+  .page-title {
+    @apply text-xl font-semibold text-slate-900 dark:text-slate-100;
+  }
+
+  .field-input {
+    @apply rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950;
+  }
+
+  .btn-primary {
+    @apply rounded-xl bg-emerald-700 px-4 py-2 text-sm font-medium text-white disabled:bg-slate-300;
+  }
+
+  .btn-secondary {
+    @apply rounded-xl border border-slate-300 px-4 py-2 text-sm hover:border-emerald-500 disabled:opacity-50 dark:border-slate-700;
+  }
 }
