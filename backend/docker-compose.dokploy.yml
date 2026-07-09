@@ -1,25 +1,48 @@
-# Dokploy deployment compose — backend only. Redis and (if you use it)
-# Postgres are assumed to already be running as separate Dokploy services on
-# the shared project network; this file does not define them.
+# Dokploy deployment — HERA backend + lightweight Redis on the shared
+# Dokploy network. Postgres/Supabase stays external (see ../.env.example).
 #
 # Environment variables
 # ---------------------
-# Paste all config in the Dokploy app "Environment" UI. Dokploy writes them to
-# a `.env` file in this directory (backend/) at deploy time. The `env_file`
-# entry below loads that file into the container — no repo-root `.env` needed.
+# Paste app config in the Dokploy "Environment" UI. Dokploy writes backend/.env
+# at deploy time; both services load it. Do not set REDIS_URL — use:
 #
-# Required in Dokploy UI (see ../.env.example for full list):
+#   REDIS_SERVER_HOST=redis
+#   REDIS_SERVER_PORT=6379
+#   REDIS_PASSWORD=redispassword
+#
+# Required in Dokploy UI (see ../.env.example):
 #   SUPABASE_URL, SUPABASE_SECRET_KEY
 #   MODEL_API_KEY or OPENAI_API_KEY
-#   REDIS_SERVER_HOST, REDIS_SERVER_PORT, REDIS_PASSWORD  (your Dokploy Redis)
 #   SUPABASE_DB_HOST, SUPABASE_DB_USER, SUPABASE_DB_PASSWORD  (pooler host)
 #   PINECONE_API_KEY  (if VECTOR_BACKEND=pinecone)
 #   PUBLIC_BASE_URL=https://your-hera-domain.example.com
 #
-# Adjust `networks.dokploy-network.name` to match the external network your
-# Redis service is attached to (`docker network ls` on the Dokploy host).
+# Adjust `networks.dokploy-network.name` if your Dokploy host uses a different
+# external network (`docker network ls` on the VPS).
 
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: >
+      sh -c 'redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru --save ""
+      --requirepass "$${REDIS_PASSWORD}"'
+    volumes:
+      - redis_data:/data
+    networks:
+      - dokploy-network
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
   backend:
     build:
       context: ..
@@ -30,10 +53,15 @@ services:
     env_file:
       - .env
     environment:
-      # Prod overrides — these win over values in Dokploy's generated .env
       HERA_RELOAD: "0"
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
       - dokploy-network
+
+volumes:
+  redis_data:
 
 networks:
   dokploy-network:
