@@ -171,6 +171,21 @@ async def dispatch_trial_matching_task(
     - semantic_query_variants: 2-4 dissimilar-but-relevant rephrasings of semantic_query, to widen vector search recall
     - n_candidates: number of final candidates to return
     """
+    if ctx.deps.dispatched_task_ids:
+        # A matching pipeline is a real side effect (creates a task, runs the
+        # full funnel + Tier 3 in the background) — dispatching twice for one
+        # user request is never correct, even if the model reconsiders its
+        # criteria mid-turn. Return the existing task instead of starting a
+        # second one.
+        existing_id = ctx.deps.dispatched_task_ids[0]
+        logger.warning("Ignoring duplicate dispatch_trial_matching_task call; task %s already dispatched", existing_id)
+        return {
+            "task_id": existing_id,
+            "audit_dashboard_url": f"/audit/{existing_id}",
+            "status": "processing",
+            "note": "A matching task was already dispatched for this request — reuse this task_id, do not dispatch again.",
+        }
+
     task_id = str(uuid.uuid4())
     trial_id = ctx.deps.trial_id or f"TRIAL-{uuid.uuid4().hex[:8].upper()}"
     search_payload = SearchCriteria(

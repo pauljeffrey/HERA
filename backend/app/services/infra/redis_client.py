@@ -84,12 +84,18 @@ async def save_agent_trace(
     )
 
 
-async def set_task_state(task_id: str, **fields: Any) -> None:
-    """Cache trial-matching task fields (status, progress, result_summary, ...) as they change."""
+async def set_task_state(key_id: str, **fields: Any) -> None:
+    """Cache trial-matching task fields (status, progress, result_summary, ...) as they change.
+
+    Named `key_id` rather than `task_id` deliberately — callers pass a full
+    row dict that itself contains a `task_id` field via `**row`; naming this
+    parameter `task_id` too caused `got multiple values for argument
+    'task_id'` whenever that key was present in `fields`.
+    """
     if not fields:
         return
     settings = get_settings()
-    key = f"{TASK_STATE_KEY_PREFIX}{task_id}"
+    key = f"{TASK_STATE_KEY_PREFIX}{key_id}"
     client = get_redis()
     encoded = {name: json.dumps(value, default=str) for name, value in fields.items()}
     await client.hset(key, mapping=encoded)

@@ -25,7 +25,7 @@ async def create_matching_task(
         "progress_percentage": progress_percentage,
         "result_summary": result_summary or {},
     }
-    await set_task_state(task_id, **{k: v for k, v in row.items() if k != "task_id"})
+    await set_task_state(task_id, **row)
 
     settings = get_settings()
     if settings.database_mode == "supabase":
@@ -77,7 +77,7 @@ async def fetch_matching_task(task_id: str) -> dict | None:
         )
         task = result.data[0] if result.data else None
         if task:
-            await set_task_state(task_id, **{k: v for k, v in task.items() if k != "task_id"})
+            await set_task_state(task_id, **task)
         return task
 
     from sqlalchemy import select
@@ -100,5 +100,5 @@ async def fetch_matching_task(task_id: str) -> dict | None:
             "result_summary": task.result_summary,
             "created_at": task.created_at.isoformat() if task.created_at else None,
         }
-        await set_task_state(task_id, **{k: v for k, v in row.items() if k != "task_id"})
+        await set_task_state(task_id, **row)
         return row

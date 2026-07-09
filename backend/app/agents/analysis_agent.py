@@ -14,7 +14,7 @@ from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wai
 
 from app.config import settings
 from app.models.agents import AnalysisAgentDeps
-from app.models.ledger import PatientTrialAudit
+from app.models.ledger import OverallAuditStatus, PatientTrialAudit
 from app.models.llm import select_model, select_vllm_model
 from app.services.clinical.notes_index import NotesIndex
 from app.services.clinical.patient_data import (
@@ -83,6 +83,7 @@ You must output a highly structured JSON response matching the provided protocol
    - Use `find_text_span(start_text, end_text)` to locate the exact verbatim span for an `evidence_quote` — this is how you confirm you are quoting precisely, not paraphrasing.
    - Use `mark_encounter_reviewed`/`list_reviewed_encounters` to track which encounters you've already read this run, so you don't re-derive the same finding twice.
    - Never call the same tool with the same arguments more than once. You have a limited number of tool calls per patient — once you have enough evidence for a criterion, move to the next one; don't re-verify the same fact repeatedly.
+   - You have a hard cap on tool calls per patient. Budget it: with N criteria, aim for roughly one tool call per criterion, not per possible tool. As soon as every criterion has a verdict (even UNKNOWN, if the record genuinely lacks the data), stop calling tools and emit your final structured audit immediately — do not keep investigating a criterion you've already reached a verdict on.
 """
 
 def _select_tier3_model():
@@ -281,4 +282,25 @@ async def evaluate_patients(
         )
         for patient_id in patient_ids
     ]
-    return await asyncio.gather(*tasks)
+    # One patient's evaluation failing (e.g. hitting its per-patient
+    # UsageLimitExceeded after retries) must not discard every other
+    # patient's completed audit — gather with return_exceptions and degrade
+    # just that one patient to REQUIRES_HUMAN_REVIEW instead of failing the
+    # whole batch.
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    audits: list[PatientTrialAudit] = []
+    for patient_id, result in zip(patient_ids, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.warning("Tier 3: evaluation failed for patient_id=%s: %s", patient_id, result)
+            audits.append(
+                PatientTrialAudit(
+                    patient_id=patient_id,
+                    trial_id=trial_id,
+                    overall_status=OverallAuditStatus.REQUIRES_HUMAN_REVIEW,
+                    chain_of_thought_summary=f"Automated evaluation failed ({result}); needs manual review.",
+                    criteria_ledger=[],
+                )
+            )
+        else:
+            audits.append(result)
+    return audits

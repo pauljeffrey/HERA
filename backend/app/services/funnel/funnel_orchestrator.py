@@ -26,7 +26,7 @@ from app.models.search import SearchCriteria
 from app.services.funnel.math_guard import evaluate_windowed_math_guard
 from app.services.funnel.search import (
     NoteChunk,
-    fetch_encounter_text,
+    fetch_encounter_texts_bulk,
     fetch_unique_patient_count,
     full_text_search,
     vector_search,
@@ -69,11 +69,13 @@ async def run_fts_vector_filter(payload: SearchCriteria) -> tuple[list[PatientTi
         # for the much smaller merged candidate set — logging only, not a
         # filter. Constraints are frequently in a lab/investigation chunk
         # rather than the SOAP note chunk that actually matched FTS/VS.
-        guard_texts = await asyncio.gather(
-            *(asyncio.to_thread(fetch_encounter_text, chunk.patient_id, chunk.encounter_id) for chunk in survivors)
-        )
+        # One batched query on one connection — opening a connection per
+        # candidate concurrently was enough to time out the Supabase pooler.
+        pairs = [(chunk.patient_id, chunk.encounter_id) for chunk in survivors]
+        texts_by_pair = await asyncio.to_thread(fetch_encounter_texts_bulk, pairs)
         soft_hits = 0
-        for chunk, text in zip(survivors, guard_texts, strict=True):
+        for chunk in survivors:
+            text = texts_by_pair.get((chunk.patient_id, chunk.encounter_id), "")
             passed, evaluations = evaluate_windowed_math_guard(text, payload.numerical_constraints)
             soft_hits += int(passed)
             logger.debug(

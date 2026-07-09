@@ -46,6 +46,19 @@ def generate_postgres_url(*, user: str, password: str, host: str, port: int, nam
         f"@{host}:{port}/{name}"
     )
 
+
+def _build_redis_url() -> str:
+    """Build REDIS_URL from REDIS_SERVER_HOST/PORT/PASSWORD (e.g. a Dokploy-
+    managed Redis service) when set; falls back to a local default."""
+    host = os.getenv("REDIS_SERVER_HOST")
+    if not host:
+        return "redis://localhost:6379/0"
+    port = os.getenv("REDIS_SERVER_PORT", "6379")
+    password = os.getenv("REDIS_PASSWORD", "")
+    auth = f":{quote_plus(password)}@" if password else ""
+    return f"redis://{auth}{host}:{port}/0"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -96,7 +109,7 @@ class Settings(BaseSettings):
     pinecone_cloud: str = os.getenv("PINECONE_CLOUD", "aws")
     pinecone_region: str = os.getenv("PINECONE_REGION", "us-east-1")
 
-    redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    redis_url: str = os.getenv("REDIS_URL") or _build_redis_url()
     redis_chat_ttl_seconds: int = int(os.getenv("REDIS_CHAT_TTL_SECONDS", str(60 * 60 * 24)))
     redis_task_ttl_seconds: int = int(os.getenv("REDIS_TASK_TTL_SECONDS", str(60 * 60 * 24 * 3)))
 

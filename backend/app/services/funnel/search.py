@@ -173,6 +173,38 @@ def fetch_encounter_text(patient_id: str, encounter_id: str) -> str:
         return ""
 
 
+def fetch_encounter_texts_bulk(pairs: list[tuple[str, str]]) -> dict[tuple[str, str], str]:
+    """Batched version of `fetch_encounter_text` — one connection, one query,
+    for the whole merged candidate set. Opening a fresh connection per
+    candidate (the original approach) fires dozens of concurrent connections
+    at the Supabase pooler, which starts timing them out under that load."""
+    if not pairs:
+        return {}
+    patient_ids = [p for p, _ in pairs]
+    encounter_ids = [e for _, e in pairs]
+    try:
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT pne.patient_id, pne.encounter_id, pne.source_type, pne.raw_text
+                FROM patient_notes_embeddings pne
+                JOIN unnest(%s::text[], %s::text[]) AS pairs(patient_id, encounter_id)
+                  ON pne.patient_id = pairs.patient_id AND pne.encounter_id = pairs.encounter_id
+                ORDER BY pne.patient_id, pne.encounter_id, pne.source_type, pne.chunk_index
+                """,
+                (patient_ids, encounter_ids),
+            )
+            rows = cur.fetchall()
+    except Exception as exc:
+        logger.warning("fetch_encounter_texts_bulk failed for %s pairs: %s", len(pairs), exc)
+        return {}
+
+    grouped: dict[tuple[str, str], list[str]] = {}
+    for patient_id, encounter_id, source_type, raw_text in rows:
+        grouped.setdefault((patient_id, encounter_id), []).append(f"[{source_type}] {raw_text}")
+    return {key: "\n".join(parts) for key, parts in grouped.items()}
+
+
 def _fetch_vs_chunks_pgvector(query_vector: list[float], *, limit: int) -> list[NoteChunk]:
     vector_literal = f"[{','.join(str(v) for v in query_vector)}]"
     sql = """
