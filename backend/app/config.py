@@ -84,11 +84,16 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["*"]
 
-    model_name: str = os.getenv("MODEL_NAME", "gpt-4o-mini")
-    model_api_key: str = os.getenv("MODEL_API_KEY", os.getenv("OPENAI_API_KEY", ""))
+    model_name: str = os.getenv("MODEL_NAME", "meta-llama/llama-3.3-70b-instruct:free")
+    model_api_key: str = os.getenv("MODEL_API_KEY", "")
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
+    google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
 
     n_final_candidates: int = int(os.getenv("N_FINAL_CANDIDATES", "15"))
     tier3_patient_cap: int = int(os.getenv("TIER3_PATIENT_CAP", "20"))
+    fts_top_k: int = int(os.getenv("FTS_TOP_K", "10"))
+    semantic_top_k: int = int(os.getenv("SEMANTIC_TOP_K", "10"))
 
     public_base_url: str = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8010")
 

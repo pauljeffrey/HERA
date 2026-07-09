@@ -2,8 +2,7 @@
 
 Chunks only ever carry identifiers (patient_id, encounter_id, chunk_id) —
 text is hydrated lazily via `search.fetch_encounter_text`, and only for the
-merged FTS+VS candidate set (typically far smaller than the raw 10k+5k bulk
-results), which is the actual memory-saving step.
+merged FTS+VS candidate set (bounded by FTS_TOP_K / SEMANTIC_TOP_K), which is the actual memory-saving step.
 
 The windowed math guard is evaluated here purely for observability/logging —
 it does NOT filter candidates out. Clinical notes often state a constraint

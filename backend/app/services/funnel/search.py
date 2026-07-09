@@ -1,8 +1,8 @@
 """Full-text search (FTS) and vector search (VS) retrieval.
 
 `NoteChunk` carries identifiers only (patient_id, encounter_id, chunk_id) —
-not the note text. Bulk FTS/VS queries return up to thousands of rows;
-carrying full text for all of them was the main memory cost of the funnel.
+not the note text. FTS/VS limits default from `FTS_TOP_K` / `SEMANTIC_TOP_K`
+(see app/config.py) so demo runs don't fan out into thousands of Tier 3 calls.
 Text is hydrated lazily, only for the much smaller post-merge candidate set,
 via `fetch_chunk_text`.
 """
@@ -14,6 +14,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 
+from app.config import get_settings
 from app.db.connection import connect
 from app.models.search import SearchCriteria
 from app.services.funnel import vector_store
@@ -53,7 +54,8 @@ def fetch_unique_patient_count() -> int:
     return len(DEMO_PATIENTS)
 
 
-def fetch_fts_chunks(keywords: list[str], *, limit: int = 10_000) -> list[NoteChunk]:
+def fetch_fts_chunks(keywords: list[str], *, limit: int | None = None) -> list[NoteChunk]:
+    limit = limit if limit is not None else get_settings().fts_top_k
     query = _fts_query(keywords)
     if not query:
         return []
@@ -257,7 +259,8 @@ def embed_query(text: str) -> list[float]:
         return []
 
 
-def full_text_search(payload: SearchCriteria, *, limit: int = 10_000) -> list[NoteChunk]:
+def full_text_search(payload: SearchCriteria, *, limit: int | None = None) -> list[NoteChunk]:
+    limit = limit if limit is not None else get_settings().fts_top_k
     chunks = fetch_fts_chunks(payload.lexical_keywords, limit=limit)
     if payload.target_patient_ids:
         allowed = set(payload.target_patient_ids)
@@ -280,10 +283,11 @@ def _search_one_query(query_text: str, *, limit: int, patient_ids: list[str] | N
         return []
 
 
-def vector_search(payload: SearchCriteria, *, limit: int = 5_000) -> list[NoteChunk]:
+def vector_search(payload: SearchCriteria, *, limit: int | None = None) -> list[NoteChunk]:
     """Runs `semantic_query` plus any `semantic_query_variants` (dissimilar
     rephrasings the chat agent generated) and merges results, so recall
     doesn't depend on one phrasing matching the note's exact wording."""
+    limit = limit if limit is not None else get_settings().semantic_top_k
     queries = [payload.semantic_query, *payload.semantic_query_variants]
     seen: dict[str, NoteChunk] = {}
     for query_text in queries:
@@ -291,11 +295,11 @@ def vector_search(payload: SearchCriteria, *, limit: int = 5_000) -> list[NoteCh
             existing = seen.get(chunk.chunk_id)
             if existing is None or (chunk.vector_score or 0) > (existing.vector_score or 0):
                 seen[chunk.chunk_id] = chunk
-    chunks = list(seen.values())
+    chunks = sorted(seen.values(), key=lambda c: c.vector_score or 0, reverse=True)[:limit]
     if payload.target_patient_ids:
         allowed = set(payload.target_patient_ids)
         chunks = [c for c in chunks if c.patient_id in allowed]
-    logger.debug("vector_search: %s queries -> %s merged chunks", len(queries), len(chunks))
+    logger.debug("vector_search: %s queries -> %s merged chunks (cap=%s)", len(queries), len(chunks), limit)
     return chunks
 
 
