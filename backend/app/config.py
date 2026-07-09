@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import json
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 from urllib.parse import quote_plus
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from hera_io.datasets import load_json_list
 
 _REPO_ROOT = Path(os.getenv("HERA_REPO_ROOT", Path(__file__).resolve().parents[2]))
 _APP_ROOT = Path(__file__).resolve().parent
@@ -32,14 +33,6 @@ def soap_notes_path(settings: Settings | None = None) -> Path:
     return _REPO_ROOT / "clinical_data_gen" / "soap_notes" / "output" / "soap_progress_notes.json"
 
 
-def load_json_list(path: Path, key: str) -> list[dict[str, Any]]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(payload, list):
-        return payload
-    if isinstance(payload, dict) and isinstance(payload.get(key), list):
-        return payload[key]
-    raise ValueError(f"Expected list or dict[{key!r}] in {path}")
-
 def generate_postgres_url(*, user: str, password: str, host: str, port: int, name: str) -> str:
     return (
         f"postgresql+asyncpg://{quote_plus(user)}:{quote_plus(password)}"
@@ -57,6 +50,11 @@ def _build_redis_url() -> str:
     password = os.getenv("REDIS_PASSWORD", "")
     auth = f":{quote_plus(password)}@" if password else ""
     return f"redis://{auth}{host}:{port}/0"
+
+
+_VECTOR_BACKEND = os.getenv("VECTOR_BACKEND", "pinecone").strip().lower()
+_VS_MIN_DEFAULT = "0.35" if _VECTOR_BACKEND == "pinecone" else "0.72"
+_VS_MERGE_DEFAULT = "0.42" if _VECTOR_BACKEND == "pinecone" else "0.90"
 
 
 class Settings(BaseSettings):
@@ -86,14 +84,13 @@ class Settings(BaseSettings):
 
     model_name: str = os.getenv("MODEL_NAME", "meta-llama/llama-3.3-70b-instruct:free")
     model_api_key: str = os.getenv("MODEL_API_KEY", "")
-    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
-    google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
 
     n_final_candidates: int = int(os.getenv("N_FINAL_CANDIDATES", "15"))
     tier3_patient_cap: int = int(os.getenv("TIER3_PATIENT_CAP", "20"))
     fts_top_k: int = int(os.getenv("FTS_TOP_K", "10"))
     semantic_top_k: int = int(os.getenv("SEMANTIC_TOP_K", "10"))
+    vs_min_similarity: float = float(os.getenv("VS_MIN_SIMILARITY", _VS_MIN_DEFAULT))
+    vs_merge_score_threshold: float = float(os.getenv("VS_MERGE_SCORE_THRESHOLD", _VS_MERGE_DEFAULT))
 
     public_base_url: str = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8010")
 
@@ -110,7 +107,7 @@ class Settings(BaseSettings):
     pinecone_index: str = os.getenv("PINECONE_INDEX", "hera")
     pinecone_index_host: str = os.getenv("PINECONE_INDEX_HOST", "")
     pinecone_namespace: str = os.getenv("PINECONE_NAMESPACE", "clinical-notes")
-    pinecone_embed_model: str = os.getenv("PINECONE_MODEL", os.getenv("PINECONE_EMBED_MODEL", "multilingual-e5-large"))
+    pinecone_embed_model: str = os.getenv("PINECONE_MODEL", "multilingual-e5-large")
     pinecone_cloud: str = os.getenv("PINECONE_CLOUD", "aws")
     pinecone_region: str = os.getenv("PINECONE_REGION", "us-east-1")
 

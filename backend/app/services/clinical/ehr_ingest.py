@@ -241,25 +241,14 @@ def embed_texts(texts: list[str], model_name: str = EMBED_MODEL) -> list[list[fl
     return [v.tolist() for v in vectors]
 
 
-def _postgres_url_from_env() -> str | None:
-    host = os.getenv("SUPABASE_DB_HOST") or os.getenv("LOCAL_DB_HOST")
-    password = os.getenv("SUPABASE_DB_PASSWORD") or os.getenv("LOCAL_DB_PASSWORD")
-    user = os.getenv("SUPABASE_DB_USER") or os.getenv("LOCAL_DB_USER", "postgres")
-    port = os.getenv("SUPABASE_DB_PORT") or os.getenv("LOCAL_DB_PORT", "5432")
-    name = os.getenv("SUPABASE_DB_NAME") or os.getenv("LOCAL_DB_NAME", "postgres")
-    if not host or not password:
-        return None
-    return f"postgresql://{user}:{password}@{host}:{port}/{name}?sslmode=require"
-
-
 def upsert_chunks_pg(chunks: list[TextChunk], embeddings: list[list[float]]) -> int:
     import json
 
     import psycopg
 
-    from app.db.connection import execute_batch
+    from app.db.connection import execute_batch, postgres_url
 
-    url = _postgres_url_from_env()
+    url = postgres_url()
     if not url:
         raise RuntimeError("Set SUPABASE_DB_HOST and SUPABASE_DB_PASSWORD for vector upserts")
 

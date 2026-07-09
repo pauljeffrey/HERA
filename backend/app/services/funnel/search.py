@@ -10,7 +10,6 @@ via `fetch_chunk_text`.
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -20,8 +19,6 @@ from app.models.search import SearchCriteria
 from app.services.funnel import vector_store
 
 logger = logging.getLogger(__name__)
-
-VS_MIN_SIMILARITY = float(os.getenv("VS_MIN_SIMILARITY", "0.72"))
 
 
 @dataclass(frozen=True)
@@ -34,8 +31,98 @@ class NoteChunk:
     vector_score: float | None = None
 
 
-def _fts_query(keywords: list[str]) -> str:
-    return " | ".join(k.strip() for k in keywords if k.strip())
+def _fts_or_clause(keywords: list[str]) -> tuple[str, list[str]]:
+    """OR across keywords — plainto_tsquery ANDs tokens within one phrase, so
+    joining phrases with '|' in a single plainto call wrongly requires every
+    criterion to co-occur in one chunk."""
+    terms = [keyword.strip() for keyword in keywords if keyword.strip()]
+    if not terms:
+        return "", []
+    clause = " || ".join("plainto_tsquery('english', %s)" for _ in terms)
+    return clause, terms
+
+
+def _filter_by_patients(chunks: list[NoteChunk], patient_ids: list[str] | None) -> list[NoteChunk]:
+    if not patient_ids:
+        return chunks
+    allowed = set(patient_ids)
+    return [chunk for chunk in chunks if chunk.patient_id in allowed]
+
+
+def upsert_chunk(merged: dict[str, NoteChunk], chunk: NoteChunk) -> None:
+    existing = merged.get(chunk.chunk_id)
+    if existing is None or (chunk.vector_score or 0) > (existing.vector_score or 0):
+        merged[chunk.chunk_id] = chunk
+
+
+def fetch_fts_chunks(keywords: list[str], *, limit: int | None = None) -> list[NoteChunk]:
+    limit = limit if limit is not None else get_settings().fts_top_k
+    clause, terms = _fts_or_clause(keywords)
+    if not clause:
+        return []
+
+    sql = f"""
+        SELECT chunk_id, patient_id, encounter_id, encounter_date, source_type
+        FROM patient_notes_embeddings
+        WHERE fts_doc @@ ({clause})
+        ORDER BY encounter_date DESC
+        LIMIT %s
+    """
+    try:
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (*terms, limit))
+            return [_row_to_chunk(row) for row in cur.fetchall()]
+    except Exception as exc:
+        logger.warning("FTS failed, falling back to source-table FTS: %s", exc)
+        try:
+            return _fts_soap_fallback(terms, limit)
+        except Exception as exc:
+            logger.warning("Source-table FTS fallback failed: %s", exc)
+            return []
+
+
+def _fts_soap_fallback(terms: list[str], limit: int) -> list[NoteChunk]:
+    """Fallback FTS directly against clinical_progress_notes, lab_results, and
+    encounter_investigations (each tied to an encounter) — used only when the
+    primary `patient_notes_embeddings` query itself errors (e.g. table missing).
+    Constraints are typically found in lab/investigation results, so those
+    tables must be searchable here too, not just SOAP notes."""
+    clause, bind_terms = _fts_or_clause(terms)
+    if not clause:
+        return []
+    sql = f"""
+        SELECT c.id, p.patient_id, e.encounter_id, e.occurred_at, 'soap_note'
+        FROM clinical_progress_notes c
+        JOIN encounters e ON e.id = c.encounter_id
+        JOIN patients p ON p.patient_id = c.patient_id
+        WHERE c.fts_doc @@ ({clause})
+
+        UNION ALL
+
+        SELECT lr.id, p.patient_id, e.encounter_id, e.occurred_at, 'lab_result'
+        FROM lab_results lr
+        JOIN lab_panels lp ON lp.id = lr.lab_panel_id
+        JOIN encounters e ON e.id = lp.encounter_id
+        JOIN patients p ON p.patient_id = e.patient_id
+        WHERE lr.fts_doc @@ ({clause})
+
+        UNION ALL
+
+        SELECT ei.id, p.patient_id, e.encounter_id, e.occurred_at, 'investigation'
+        FROM encounter_investigations ei
+        JOIN encounters e ON e.id = ei.encounter_id
+        JOIN patients p ON p.patient_id = e.patient_id
+        WHERE ei.fts_doc @@ ({clause})
+
+        ORDER BY 4 DESC
+        LIMIT %s
+    """
+    params = (*bind_terms, *bind_terms, *bind_terms, limit)
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        chunks = [_row_to_chunk(row) for row in cur.fetchall()]
+        logger.debug("FTS fallback matched %s rows across notes/labs/investigations", len(chunks))
+        return chunks
 
 
 def fetch_unique_patient_count() -> int:
@@ -52,84 +139,6 @@ def fetch_unique_patient_count() -> int:
     from app.services.clinical.mock_data import DEMO_PATIENTS
 
     return len(DEMO_PATIENTS)
-
-
-def fetch_fts_chunks(keywords: list[str], *, limit: int | None = None) -> list[NoteChunk]:
-    limit = limit if limit is not None else get_settings().fts_top_k
-    query = _fts_query(keywords)
-    if not query:
-        return []
-
-    sql = """
-        SELECT chunk_id, patient_id, encounter_id, encounter_date, source_type
-        FROM patient_notes_embeddings, plainto_tsquery('english', %s) q
-        WHERE fts_doc @@ q
-        ORDER BY encounter_date DESC
-        LIMIT %s
-    """
-    try:
-        with connect() as conn, conn.cursor() as cur:
-            cur.execute(sql, (query, limit))
-            return [_row_to_chunk(row) for row in cur.fetchall()]
-    except Exception as exc:
-        logger.warning("FTS failed, falling back to source-table FTS: %s", exc)
-        try:
-            return _fts_soap_fallback(query, limit)
-        except Exception as exc:
-            logger.warning("Source-table FTS fallback failed: %s", exc)
-            return []
-
-
-def _fts_soap_fallback(query: str, limit: int) -> list[NoteChunk]:
-    """Fallback FTS directly against clinical_progress_notes, lab_results, and
-    encounter_investigations (each tied to an encounter) — used only when the
-    primary `patient_notes_embeddings` query itself errors (e.g. table missing).
-    Constraints are typically found in lab/investigation results, so those
-    tables must be searchable here too, not just SOAP notes."""
-    sql = """
-        SELECT c.id, p.patient_id, e.encounter_id, e.occurred_at, 'soap_note'
-        FROM clinical_progress_notes c
-        JOIN encounters e ON e.id = c.encounter_id
-        JOIN patients p ON p.patient_id = c.patient_id,
-        plainto_tsquery('english', %s) q
-        WHERE c.fts_doc @@ q
-
-        UNION ALL
-
-        SELECT lr.id, p.patient_id, e.encounter_id, e.occurred_at, 'lab_result'
-        FROM lab_results lr
-        JOIN lab_panels lp ON lp.id = lr.lab_panel_id
-        JOIN encounters e ON e.id = lp.encounter_id
-        JOIN patients p ON p.patient_id = e.patient_id,
-        plainto_tsquery('english', %s) q
-        WHERE lr.fts_doc @@ q
-
-        UNION ALL
-
-        SELECT ei.id, p.patient_id, e.encounter_id, e.occurred_at, 'investigation'
-        FROM encounter_investigations ei
-        JOIN encounters e ON e.id = ei.encounter_id
-        JOIN patients p ON p.patient_id = e.patient_id,
-        plainto_tsquery('english', %s) q
-        WHERE ei.fts_doc @@ q
-
-        ORDER BY 4 DESC
-        LIMIT %s
-    """
-    with connect() as conn, conn.cursor() as cur:
-        cur.execute(sql, (query, query, query, limit))
-        chunks = [
-            NoteChunk(
-                patient_id=row[1],
-                encounter_id=row[2],
-                chunk_id=str(row[0]),
-                encounter_date=row[3],
-                source_type=row[4],
-            )
-            for row in cur.fetchall()
-        ]
-        logger.debug("FTS fallback matched %s rows across notes/labs/investigations", len(chunks))
-        return chunks
 
 
 def fetch_chunk_text(chunk_id: str) -> str:
@@ -208,6 +217,7 @@ def fetch_encounter_texts_bulk(pairs: list[tuple[str, str]]) -> dict[tuple[str, 
 
 
 def _fetch_vs_chunks_pgvector(query_vector: list[float], *, limit: int) -> list[NoteChunk]:
+    min_similarity = get_settings().vs_min_similarity
     vector_literal = f"[{','.join(str(v) for v in query_vector)}]"
     sql = """
         SELECT chunk_id, patient_id, encounter_id, encounter_date, source_type,
@@ -219,7 +229,7 @@ def _fetch_vs_chunks_pgvector(query_vector: list[float], *, limit: int) -> list[
         LIMIT %s
     """
     with connect() as conn, conn.cursor() as cur:
-        cur.execute(sql, (vector_literal, vector_literal, VS_MIN_SIMILARITY, vector_literal, limit))
+        cur.execute(sql, (vector_literal, vector_literal, min_similarity, vector_literal, limit))
         return [
             NoteChunk(
                 patient_id=row[1],
@@ -234,9 +244,13 @@ def _fetch_vs_chunks_pgvector(query_vector: list[float], *, limit: int) -> list[
 
 
 def _fetch_vs_chunks_pinecone(query_text: str, *, limit: int, patient_ids: list[str] | None) -> list[NoteChunk]:
+    min_similarity = get_settings().vs_min_similarity
     matches = vector_store.search_records(query_text, top_k=limit, patient_ids=patient_ids)
     chunks: list[NoteChunk] = []
     for match in matches:
+        score = match.get("score")
+        if score is None or float(score) < min_similarity:
+            continue
         encounter_date = match.get("encounter_date")
         chunks.append(
             NoteChunk(
@@ -245,7 +259,7 @@ def _fetch_vs_chunks_pinecone(query_text: str, *, limit: int, patient_ids: list[
                 chunk_id=match["chunk_id"],
                 encounter_date=datetime.fromisoformat(encounter_date) if encounter_date else datetime.now(),
                 source_type=match.get("source_type", "unknown"),
-                vector_score=match.get("score"),
+                vector_score=float(score),
             )
         )
     return chunks
@@ -260,12 +274,8 @@ def embed_query(text: str) -> list[float]:
 
 
 def full_text_search(payload: SearchCriteria, *, limit: int | None = None) -> list[NoteChunk]:
-    limit = limit if limit is not None else get_settings().fts_top_k
     chunks = fetch_fts_chunks(payload.lexical_keywords, limit=limit)
-    if payload.target_patient_ids:
-        allowed = set(payload.target_patient_ids)
-        chunks = [c for c in chunks if c.patient_id in allowed]
-    return chunks
+    return _filter_by_patients(chunks, payload.target_patient_ids)
 
 
 def _search_one_query(query_text: str, *, limit: int, patient_ids: list[str] | None) -> list[NoteChunk]:
@@ -292,15 +302,10 @@ def vector_search(payload: SearchCriteria, *, limit: int | None = None) -> list[
     seen: dict[str, NoteChunk] = {}
     for query_text in queries:
         for chunk in _search_one_query(query_text, limit=limit, patient_ids=payload.target_patient_ids):
-            existing = seen.get(chunk.chunk_id)
-            if existing is None or (chunk.vector_score or 0) > (existing.vector_score or 0):
-                seen[chunk.chunk_id] = chunk
+            upsert_chunk(seen, chunk)
     chunks = sorted(seen.values(), key=lambda c: c.vector_score or 0, reverse=True)[:limit]
-    if payload.target_patient_ids:
-        allowed = set(payload.target_patient_ids)
-        chunks = [c for c in chunks if c.patient_id in allowed]
     logger.debug("vector_search: %s queries -> %s merged chunks (cap=%s)", len(queries), len(chunks), limit)
-    return chunks
+    return _filter_by_patients(chunks, payload.target_patient_ids)
 
 
 def _row_to_chunk(row) -> NoteChunk:

@@ -2,26 +2,16 @@
 
 from __future__ import annotations
 
-import os
+from pathlib import Path
 
 import psycopg
 import pytest
 from dotenv import load_dotenv
 
-load_dotenv("../.env")
-load_dotenv(".env")
+ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(ROOT / ".env")
 
-
-def postgres_url() -> str | None:
-    host = os.getenv("SUPABASE_DB_HOST") or os.getenv("LOCAL_DB_HOST")
-    password = os.getenv("SUPABASE_DB_PASSWORD") or os.getenv("LOCAL_DB_PASSWORD")
-    if not host or not password:
-        return None
-    user = os.getenv("SUPABASE_DB_USER") or os.getenv("LOCAL_DB_USER", "postgres")
-    port = os.getenv("SUPABASE_DB_PORT") or os.getenv("LOCAL_DB_PORT", "5432")
-    name = os.getenv("SUPABASE_DB_NAME") or os.getenv("LOCAL_DB_NAME", "postgres")
-    sslmode = "require" if os.getenv("SUPABASE_DB_HOST") else "disable"
-    return f"postgresql://{user}:{password}@{host}:{port}/{name}?sslmode={sslmode}"
+from app.db.connection import postgres_url
 
 
 @pytest.fixture(scope="session")
