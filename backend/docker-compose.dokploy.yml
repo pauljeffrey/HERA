@@ -2,41 +2,22 @@
 # Postgres are assumed to already be running as separate Dokploy services on
 # the shared project network; this file does not define them.
 #
-# Set these in the Dokploy app's environment variables UI (or an env file
-# Dokploy loads) — anything left unset falls back to the default shown below:
+# Environment variables
+# ---------------------
+# Paste all config in the Dokploy app "Environment" UI. Dokploy writes them to
+# a `.env` file in this directory (backend/) at deploy time. The `env_file`
+# entry below loads that file into the container — no repo-root `.env` needed.
 #
-#   REDIS_SERVER_HOST=redis
-#   REDIS_SERVER_PORT=6379
-#   REDIS_PASSWORD=redispassword
+# Required in Dokploy UI (see ../.env.example for full list):
+#   SUPABASE_URL, SUPABASE_SECRET_KEY
+#   MODEL_API_KEY or OPENAI_API_KEY
+#   REDIS_SERVER_HOST, REDIS_SERVER_PORT, REDIS_PASSWORD  (your Dokploy Redis)
+#   SUPABASE_DB_HOST, SUPABASE_DB_USER, SUPABASE_DB_PASSWORD  (pooler host)
+#   PINECONE_API_KEY  (if VECTOR_BACKEND=pinecone)
+#   PUBLIC_BASE_URL=https://your-hera-domain.example.com
 #
-#   DATABASE_MODE=supabase
-#   SUPABASE_URL=...
-#   SUPABASE_SECRET_KEY=...
-#   SUPABASE_DB_HOST=aws-0-<region>.pooler.supabase.com   (IPv4 pooler — the
-#                                                           direct db.<ref>.supabase.co
-#                                                           host is IPv6-only
-#                                                           and unreachable from
-#                                                           most container networks)
-#   SUPABASE_DB_PORT=6543
-#   SUPABASE_DB_USER=postgres.<project-ref>
-#   SUPABASE_DB_PASSWORD=...
-#
-#   MODEL_API_KEY=... / OPENAI_API_KEY=...
-#   MODEL_NAME=gpt-5-nano
-#
-#   VECTOR_BACKEND=pinecone
-#   PINECONE_API_KEY=...
-#   PINECONE_INDEX=hera
-#   PINECONE_MODEL=...
-#
-#   PUBLIC_BASE_URL=https://your-hera-domain.example.com   (used to build
-#                                                            absolute chart
-#                                                            image URLs)
-#
-# Adjust `networks.dokploy-network.name` below to match the actual external
-# network your Redis (and Postgres, if local) services are attached to —
-# check it with `docker network ls` on the Dokploy host, or in the Dokploy
-# UI under the project's "Advanced" / network settings.
+# Adjust `networks.dokploy-network.name` to match the external network your
+# Redis service is attached to (`docker network ls` on the Dokploy host).
 
 services:
   backend:
@@ -46,48 +27,11 @@ services:
     restart: unless-stopped
     expose:
       - "8000"
+    env_file:
+      - .env
     environment:
+      # Prod overrides — these win over values in Dokploy's generated .env
       HERA_RELOAD: "0"
-
-      DATABASE_MODE: ${DATABASE_MODE:-supabase}
-      PREPOPULATE_DB: ${PREPOPULATE_DB:-if_empty}
-
-      MODEL_API_KEY: ${MODEL_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      MODEL_NAME: ${MODEL_NAME:-gpt-5-nano}
-
-      SUPABASE_URL: ${SUPABASE_URL:-}
-      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
-      SUPABASE_DB_HOST: ${SUPABASE_DB_HOST:-}
-      SUPABASE_DB_PORT: ${SUPABASE_DB_PORT:-6543}
-      SUPABASE_DB_USER: ${SUPABASE_DB_USER:-}
-      SUPABASE_DB_PASSWORD: ${SUPABASE_DB_PASSWORD:-}
-      SUPABASE_DB_NAME: ${SUPABASE_DB_NAME:-postgres}
-
-      # Existing Dokploy Redis service — REDIS_URL is built from these at
-      # startup (see app/config.py::_build_redis_url).
-      REDIS_SERVER_HOST: ${REDIS_SERVER_HOST:-redis}
-      REDIS_SERVER_PORT: ${REDIS_SERVER_PORT:-6379}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      REDIS_CHAT_TTL_SECONDS: ${REDIS_CHAT_TTL_SECONDS:-86400}
-      REDIS_TASK_TTL_SECONDS: ${REDIS_TASK_TTL_SECONDS:-259200}
-
-      VECTOR_BACKEND: ${VECTOR_BACKEND:-pinecone}
-      PINECONE_API_KEY: ${PINECONE_API_KEY:-}
-      PINECONE_INDEX: ${PINECONE_INDEX:-hera}
-      PINECONE_INDEX_HOST: ${PINECONE_INDEX_HOST:-}
-      PINECONE_NAMESPACE: ${PINECONE_NAMESPACE:-clinical-notes}
-      PINECONE_MODEL: ${PINECONE_MODEL:-multilingual-e5-large}
-      PINECONE_CLOUD: ${PINECONE_CLOUD:-aws}
-      PINECONE_REGION: ${PINECONE_REGION:-us-east-1}
-
-      HERA_TIER3_ENGINE: ${HERA_TIER3_ENGINE:-api}
-      MODAL_VLLM_BASE_URL: ${MODAL_VLLM_BASE_URL:-}
-      MODAL_VLLM_API_KEY: ${MODAL_VLLM_API_KEY:-not-needed}
-      MODAL_VLLM_MODEL: ${MODAL_VLLM_MODEL:-google/gemma-3-4b-it}
-
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
-      HERA_LOG_LEVEL: ${HERA_LOG_LEVEL:-INFO}
     networks:
       - dokploy-network
 
