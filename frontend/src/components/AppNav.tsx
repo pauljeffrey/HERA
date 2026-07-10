@@ -10,6 +10,7 @@ const links = [
 
 export default function AppNav() {
   const pathname = usePathname();
+  if (pathname.startsWith("/embed")) return null;
 
   return (
     <nav className="sticky top-0 z-50 border-b border-slate-200/60 bg-white/90 backdrop-blur-md dark:border-slate-800 dark:bg-slate-950/90">
