@@ -1,134 +1,97 @@
+# Local dev — lean defaults for laptops (Supabase + Pinecone; no local Postgres by default).
+#
+#   docker compose up -d              # redis + backend (~850 MB cap)
+#   docker compose --profile local-db up -d   # + Postgres (+384 MB)
+#
+# Run backend on the host (lightest):  docker compose up -d redis
+#   then: cd backend && REDIS_URL=redis://localhost:6380/0 uvicorn ...
+
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    command: >
+      redis-server
+      --maxmemory 48mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --tcp-backlog 128
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64M
 
   postgres:
-
-    profiles: ["local"]
-
+    profiles: ["local-db"]
     image: pgvector/pgvector:pg16
-
-    environment:
-
-      POSTGRES_USER: hera
-
-      POSTGRES_PASSWORD: hera
-
-      POSTGRES_DB: hera
-
     ports:
-
       - "5433:5432"
-
+    environment:
+      POSTGRES_USER: hera
+      POSTGRES_PASSWORD: hera
+      POSTGRES_DB: hera
+    command: >
+      postgres
+      -c shared_buffers=64MB
+      -c max_connections=30
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
+      -c effective_cache_size=128MB
     volumes:
-
       - hera_pgdata:/var/lib/postgresql/data
-
       - ./app/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
-
     healthcheck:
-
       test: ["CMD-SHELL", "pg_isready -U hera"]
-
-      interval: 5s
-
+      interval: 10s
       timeout: 5s
-
       retries: 5
-
-
-
-  redis:
-
-    image: redis:7-alpine
-
-    ports:
-
-      - "6380:6379"
-
-    volumes:
-
-      - hera_redisdata:/data
-
-    healthcheck:
-
-      test: ["CMD", "redis-cli", "ping"]
-
-      interval: 5s
-
-      timeout: 5s
-
-      retries: 5
-
-
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 384M
 
   backend:
-
     build:
-
       context: ..
-
       dockerfile: backend/Dockerfile
-
     ports:
-
       - "8010:8000"
-
-    dns:
-
-      - 8.8.8.8
-
-      - 8.8.4.4
-
     env_file:
-
       - ../.env
-
     environment:
-
       DATABASE_MODE: ${DATABASE_MODE:-supabase}
-
-      PREPOPULATE_DB: ${PREPOPULATE_DB:-if_empty}
-
-      HERA_RELOAD: "1"
-
+      PREPOPULATE_DB: ${PREPOPULATE_DB:-off}
+      HERA_RELOAD: ${HERA_RELOAD:-0}
       HERA_RELOAD_DIR: /app/app
-
-      PATIENT_TRAJECTORIES_PATH: /workspace/clinical_data_gen/structured_clinical_data/output/20260630T033940Z/datasets/patient_trajectories.json
-
-      SOAP_NOTES_PATH: /workspace/clinical_data_gen/soap_notes/output/20260630T050119Z/datasets/soap_progress_notes.json
-
       LOCAL_DB_HOST: postgres
-
-      LOCAL_DB_PORT: 5432
-
+      LOCAL_DB_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
-
       PYTHONPATH: /workspace:/app
-
       HERA_REPO_ROOT: /workspace
-
+      PATIENT_TRAJECTORIES_PATH: /workspace/clinical_data_gen/structured_clinical_data/output/20260630T033940Z/datasets/patient_trajectories.json
+      SOAP_NOTES_PATH: /workspace/clinical_data_gen/soap_notes/output/20260630T050119Z/datasets/soap_progress_notes.json
     volumes:
-
       - ..:/workspace:ro
-
       - ./app:/app/app
-
     depends_on:
-
-      postgres:
-
-        condition: service_healthy
-
-        required: false
-
       redis:
-
         condition: service_healthy
-
-
+    init: true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
 
 volumes:
-
   hera_pgdata:
-
-  hera_redisdata:
-

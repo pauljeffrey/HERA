@@ -1,0 +1,52 @@
+[
+  {
+    "id": 1,
+    "title": "HFrEF with LVEF and renal cutoffs",
+    "message": "Find eligible patients for a heart failure trial: LVEF at or below 35%, serum creatinine below 2.0 mg/dL, age 18–80, on guideline-directed medical therapy for HFrEF."
+  },
+  {
+    "id": 2,
+    "title": "Reduced EF cardiomyopathy study",
+    "message": "Match patients for a new study in reduced ejection fraction cardiomyopathy. Inclusion: HFrEF, EF ≤35% on recent echo, adults 18–80. Exclusion: creatinine ≥2.0 mg/dL or dialysis."
+  },
+  {
+    "id": 3,
+    "title": "GDMT-optimized systolic HF cohort",
+    "message": "Who in our database might qualify for a GDMT optimization trial? Need documented HFrEF, LVEF under 35%, stable on ACE inhibitor or ARNI plus beta-blocker, and creatinine under 2.0 mg/dL."
+  },
+  {
+    "id": 4,
+    "title": "Ischemic cardiomyopathy enrollment",
+    "message": "Find patients for an ischemic cardiomyopathy trial: ischemic heart disease with HFrEF, LVEF ≤30%, age 40–75, no severe renal impairment (creatinine < 2.5 mg/dL)."
+  },
+  {
+    "id": 5,
+    "title": "Heart failure + elevated creatinine screen",
+    "message": "Screen the EHR for a heart failure study accepting patients with mildly elevated creatinine: HFrEF with LVEF ≤35%, creatinine between 1.5 and 2.0 mg/dL, age 21–80."
+  },
+  {
+    "id": 6,
+    "title": "Post-admission HFrEF survivors",
+    "message": "Identify candidates for a post-hospitalization heart failure trial: hospitalized for acute decompensated HFrEF, discharged on GDMT, LVEF at or below 35%, age 18–85."
+  },
+  {
+    "id": 7,
+    "title": "Low EF with MRA therapy",
+    "message": "Find patients for a mineralocorticoid receptor antagonist trial: HFrEF, LVEF ≤35%, already on spironolactone or eplerenone, serum potassium below 5.0 mEq/L, creatinine < 2.0 mg/dL."
+  },
+  {
+    "id": 8,
+    "title": "Broad HF phenotype search",
+    "message": "Run a trial match for adults with chronic systolic heart failure, depressed left ventricular ejection fraction (≤35%), and acceptable renal function. Return the best candidates for chart review."
+  },
+  {
+    "id": 9,
+    "title": "Structured protocol paste",
+    "message": "Find patients for Trial PROTO-HF-042.\nInclusion: age 18–80; HFrEF; LVEF ≤35% within 12 months; creatinine < 2.0 mg/dL; on beta-blocker and RAAS inhibitor.\nExclusion: severe CKD, cardiogenic shock, cardiac transplant."
+  },
+  {
+    "id": 10,
+    "title": "Natural-language study ask",
+    "message": "I'm opening enrollment for a heart failure with reduced ejection fraction study. Who looks eligible if we need EF at or under thirty-five percent, creatinine under two, and patients already on standard GDMT?"
+  }
+]
