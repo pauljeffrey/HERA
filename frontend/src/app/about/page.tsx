@@ -50,18 +50,18 @@ export default function AboutPage() {
           </p>
           <ol className="list-decimal space-y-2 pl-5">
             <li>
-              <strong>Structured trajectories</strong> — <code className="text-xs">clinical_data_gen/structured_clinical_data</code>{" "}
+              <strong>Structured trajectories</strong> (<code className="text-xs">clinical_data_gen/structured_clinical_data</code>{" "})
               uses the OpenAI Batch API to produce longitudinal patient JSON: demographics, encounters,
               diagnoses, medications, labs, and investigations across cardiovascular, oncology, and ICU
               specialties.
             </li>
             <li>
-              <strong>SOAP notes</strong> — <code className="text-xs">clinical_data_gen/soap_notes</code>{" "}
+              <strong>SOAP notes</strong>(<code className="text-xs">clinical_data_gen/soap_notes</code>{" "})
               converts each structured encounter into unstructured SOAP progress notes (again via Batch API),
               so the search funnel has realistic clinical prose to index.
             </li>
             <li>
-              <strong>Load into Supabase</strong> — <code className="text-xs">backend/app/db/schema.sql</code>{" "}
+              <strong>Load into Supabase</strong>(<code className="text-xs">backend/app/db/schema.sql</code>{" "})
               defines the Postgres tables. On startup, the backend prepopulate service reads the generated
               JSON datasets and upserts rows into Supabase over the REST API. A separate embedding
               ingest step (<code className="text-xs">scripts/ingest_ehr</code>) chunks those notes and
@@ -78,19 +78,19 @@ export default function AboutPage() {
         <InfoCard title="System design (simple view)" icon="🏗️">
           <ul className="list-disc space-y-2 pl-5">
             <li>
-              <strong>Command Center</strong> :— chat interface where you ask questions, start searches, or
+              <strong>Command Center</strong> : chat interface where you ask questions, start searches, or
               explore individual patients.
             </li>
             <li>
-              <strong>Matching pipeline</strong> :— runs in the background after you dispatch a search;
+              <strong>Matching pipeline</strong> : runs in the background after you dispatch a search;
               progress is tracked by task ID.
             </li>
             <li>
-              <strong>Audit dashboard</strong> (four-pane view) :—  chart timeline, metrics, eligibility
+              <strong>Audit dashboard</strong> (four-pane view) :  chart timeline, metrics, eligibility
               ledger, and an optional copilot for follow-up questions.
             </li>
             <li>
-              <strong>Audit log</strong> :— clinician overrides and agent responses are stored for
+              <strong>Audit log</strong> : clinician overrides and agent responses are stored for
               traceability.
             </li>
           </ul>
