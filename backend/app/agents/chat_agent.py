@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any, Optional, List
 
-from pydantic_ai import Agent, RunContext, UsageLimits
+from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimits
 
 from app.config import settings
 from app.models.agents import ChatAgentDeps, Response
@@ -14,6 +15,7 @@ from app.models.search import NumericalConstraint, SearchCriteria
 from app.services.audit.task_storage import create_matching_task, update_matching_task
 from app.services.clinical.patient_data import (
     compute_cohort_statistic,
+    describe_database_schema,
     execute_analytical_sql_query as run_analytical_sql_query,
     get_patient_clinical_snapshot as build_patient_clinical_snapshot,
     get_patient_complete_timeline as build_patient_complete_timeline,
@@ -23,6 +25,7 @@ from app.services.clinical.plotting import render_chart
 from app.services.clinical.time_utils import parse_at
 from app.services.funnel.match_pipeline import run_matching_pipeline
 from app.services.infra.redis_client import load_chat_history, save_chat_history
+from app.services.infra.stream_events import chunk_text
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,7 @@ MODE 1: CLINICAL DATABASE QUERYING (Text-to-SQL / Database Analytics)
   1. Do not initiate a trial matching task.
   2. Tool choice matters here:
      - Counting rows in a table (patients, encounters, labs, etc.) or getting table sizes → `query_clinical_database_metadata`.
+     - Before writing any SQL, call `get_database_schema` once to see the exact tables and columns — never guess column names.
      - Any numeric aggregate over a real column (average/min/max/sum of age, vitals, labs) or anything needing a WHERE/GROUP BY/JOIN → `execute_analytical_sql_query`.
      - `compute_database_statistic` is ONLY for "how many patients' notes mention <free-text term>" style prevalence checks — never use it to count total rows or compute a column aggregate; it will not give you that.
   3. Respond to the clinician with clear Markdown tables or concise clinical summaries.
@@ -48,11 +52,12 @@ MODE 1: CLINICAL DATABASE QUERYING (Text-to-SQL / Database Analytics)
 MODE 2: INDIVIDUAL PATIENT CHAT & EXPLORATION (Context-Bound RAG)
 - TRIGGER: The user refers to a specific patient, asks to explore a patient's timeline, or asks questions during an active audit (e.g., "Why did Patient 104's creatinine spike in Nov 2025?", "What medications is PT-894 on?").
 - ACTIONS:
-  1. Bind your context to the target `patient_id`.
+  1. Bind your context to the target `patient_id` (use `ctx.deps.patient_id` when the frontend has already bound one).
   2. Use `get_patient_complete_timeline` to fetch their chronological longitudinal notes.
   3. Use `get_patient_clinical_snapshot` when structured vitals, labs, medications, or diagnoses are needed.
-  4. Perform a focused analysis. Cite specific encounter dates (e.g., "On 2025-11-04 during an ICU Admission...").
-  5. Keep answers highly objective, structured in standard medical format (SBAR or soap notes summary if requested), and do not hallucinate physiological data.
+  4. Perform a thorough, evidence-based analysis. Cite specific encounter dates (e.g., "On 2025-11-04 during an ICU Admission...").
+  5. When trends, distributions, or comparisons across encounters are clinically useful, call `generate_chart` and embed the returned `image_url` as a markdown image (`![title](image_url)`) in your response.
+  6. Keep answers highly objective, structured in standard medical format (SBAR or SOAP summary if requested), and do not hallucinate physiological data.
 
 ---
 MODE 3: CLINICAL TRIAL MATCHING DISPATCH
@@ -61,8 +66,9 @@ MODE 3: CLINICAL TRIAL MATCHING DISPATCH
   1. Do not attempt to run a full table search directly in chat.
   2. Synthesize the criteria into a structured configuration in your output fields (`lexical_keywords`, `semantic_query`, `numerical_constraints`, `target_patient_ids`).
   3. Also produce `semantic_query_variants`: 2-4 DISSIMILAR but clinically relevant rephrasings of `semantic_query` — vary terminology and angle (e.g. layman vs. clinical phrasing, symptom-first vs. diagnosis-first, different synonyms for the same condition) so vector search isn't dependent on one exact phrasing matching the note. Do not just reorder the same words — genuinely vary vocabulary and framing.
-  4. Call the `dispatch_trial_matching_task` tool with all of the above.
-  5. Return a natural language summary validating the criteria you parsed, alongside the tracking payload and a clean redirect link to the Audit Dashboard page `/audit/[task_id]`.
+  4. When the user specifies how many final candidates they want (e.g. "find 10 patients", "return 25 matches"), pass that exact integer as `n_candidates` to `dispatch_trial_matching_task`. This overrides the default cohort cap.
+  5. Call the `dispatch_trial_matching_task` tool with all of the above.
+  6. Return a natural language summary validating the criteria you parsed, alongside the tracking payload. Provide exactly one audit link as markdown: `[View audit dashboard](/audit/{task_id})`. Never paste the raw `/audit/...` path as plain text — the link alone is enough.
 
 ---
 GENERAL CLINICAL PROTOCOLS:
@@ -107,6 +113,14 @@ def query_clinical_database_metadata(ctx: RunContext[ChatAgentDeps]) -> dict[str
 
 
 @chat_agent.tool
+def get_database_schema(ctx: RunContext[ChatAgentDeps]) -> dict[str, Any]:
+    """Return every table with its exact column names, join hints, and gotchas.
+    Call this before writing SQL — do not guess column names."""
+    logger.info("tool call: get_database_schema")
+    return describe_database_schema()
+
+
+@chat_agent.tool
 def execute_analytical_sql_query(
     ctx: RunContext[ChatAgentDeps],
     sql_query: str,
@@ -117,8 +131,12 @@ def execute_analytical_sql_query(
     try:
         return run_analytical_sql_query(sql_query, limit=limit)
     except Exception as exc:
+        # Bad SQL (wrong column, type mismatch) shouldn't 500 the whole chat —
+        # surface the DB error so the model consults get_database_schema and retries.
         logger.warning("execute_analytical_sql_query failed sql=%r: %s", sql_query, exc)
-        raise
+        raise ModelRetry(
+            f"SQL failed: {exc}. Call get_database_schema for exact table/column names, then retry."
+        ) from exc
 
 
 @chat_agent.tool
@@ -160,7 +178,7 @@ async def dispatch_trial_matching_task(
     numerical_constraints: List[NumericalConstraint],
     criteria_summary: str,
     semantic_query_variants: Optional[List[str]] = None,
-    n_candidates: Optional[int] = 5,
+    n_candidates: Optional[int] = None,
 ) -> dict[str, Any]:
     """Create a clinical trial matching task and start FTS → vector search → Agentic search pipeline.
     Arguments:
@@ -181,9 +199,9 @@ async def dispatch_trial_matching_task(
         logger.warning("Ignoring duplicate dispatch_trial_matching_task call; task %s already dispatched", existing_id)
         return {
             "task_id": existing_id,
-            "audit_dashboard_url": f"/audit/{existing_id}",
             "status": "processing",
             "note": "A matching task was already dispatched for this request — reuse this task_id, do not dispatch again.",
+            "audit_link_markdown": f"[View audit dashboard](/audit/{existing_id})",
         }
 
     task_id = str(uuid.uuid4())
@@ -194,7 +212,7 @@ async def dispatch_trial_matching_task(
         semantic_query=semantic_query or "",
         semantic_query_variants=semantic_query_variants or [],
         numerical_constraints=numerical_constraints,
-        n_candidates = n_candidates or settings.n_final_candidates
+        n_candidates=n_candidates if n_candidates and n_candidates > 0 else settings.n_final_candidates,
     )
 
     await create_matching_task(
@@ -221,9 +239,9 @@ async def dispatch_trial_matching_task(
     return {
         "task_id": task_id,
         "trial_id": trial_id,
-        "audit_dashboard_url": f"/audit/{task_id}",
         "status": "processing",
         "lexical_keywords": search_payload.lexical_keywords,
+        "audit_link_markdown": f"[View audit dashboard](/audit/{task_id})",
     }
 
 
@@ -235,6 +253,8 @@ async def run_chat_agent(
     """Run the chat agent, resuming and persisting history in Redis for `conversation_id`."""
     deps = agent_deps or ChatAgentDeps()
     conversation_id = conversation_id or str(uuid.uuid4())
+    if deps.patient_id:
+        message = f"[Active patient context: {deps.patient_id}]\n\n{message}"
     message_history = await load_chat_history(conversation_id)
     result = await chat_agent.run(
         message,
@@ -247,3 +267,38 @@ async def run_chat_agent(
     )
     await save_chat_history(conversation_id, result.all_messages())
     return result.output, conversation_id
+
+
+async def iter_chat_agent(
+    message: str,
+    agent_deps: Optional[ChatAgentDeps] = None,
+    conversation_id: Optional[str] = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Mimic token streaming: status updates while running, then chunked reply text."""
+    yield {"type": "status", "content": "Thinking…"}
+    deps = agent_deps or ChatAgentDeps()
+    conversation_id = conversation_id or str(uuid.uuid4())
+    if deps.patient_id:
+        message = f"[Active patient context: {deps.patient_id}]\n\n{message}"
+    message_history = await load_chat_history(conversation_id)
+    yield {"type": "status", "content": "Consulting clinical tools…"}
+    result = await chat_agent.run(
+        message,
+        deps=deps,
+        message_history=message_history,
+        usage_limits=UsageLimits(request_limit=12),
+    )
+    await save_chat_history(conversation_id, result.all_messages())
+    payload = result.output
+    yield {"type": "status", "content": "Composing response…"}
+    for delta in chunk_text(payload.response):
+        yield {"type": "delta", "content": delta}
+    target_ids = payload.search_payload.target_patient_ids if payload.search_payload else None
+    suggested = (target_ids[0] if target_ids else None) or deps.patient_id
+    yield {
+        "type": "done",
+        "reply": payload.response,
+        "conversation_id": conversation_id,
+        "suggested_patient_id": suggested,
+        "search_payload": payload.search_payload.model_dump(mode="json") if payload.search_payload else None,
+    }
