@@ -94,6 +94,12 @@ export default function AboutPage() {
         <InfoCard title="Trade-offs & considerations" icon="⚖️">
           <ul className="list-disc space-y-2 pl-5">
             <li>
+              <strong>Demo tuning</strong> — this deployment uses smaller backend limits (typically in the
+              5–10 range for retrieval and deep-review caps) so searches return faster. That keeps the demo
+              responsive, but results and performance may vary compared with a full production run and can be
+              slightly less accurate.
+            </li>
+            <li>
               <strong>Speed vs. depth</strong> — the funnel caps how many patients get a full chart review
               so responses stay practical; very large cohorts may need stricter criteria.
             </li>

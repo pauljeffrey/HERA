@@ -95,7 +95,7 @@ export default function CommandCenter() {
     setMessages((prev) => [
       ...prev,
       { role: "user", content: text },
-      { role: "assistant", content: "", streaming: true, statusText: "Thinking…" },
+      { role: "assistant", content: "", streaming: true, statusText: "thinking..." },
     ]);
     setInput("");
 
@@ -103,16 +103,6 @@ export default function CommandCenter() {
       const response = await streamChatMessage(
         text,
         {
-          onStatus: (status) => {
-            setMessages((prev) => {
-              const next = [...prev];
-              const row = next[assistantIndex];
-              if (row?.role === "assistant") {
-                next[assistantIndex] = { ...row, statusText: status };
-              }
-              return next;
-            });
-          },
           onDelta: (delta) => {
             setMessages((prev) => {
               const next = [...prev];
@@ -263,7 +253,7 @@ export default function CommandCenter() {
                           {isUser ? (
                             <p className="whitespace-pre-wrap">{message.content}</p>
                           ) : message.streaming && !message.content ? (
-                            <p className="text-slate-500">{message.statusText ?? "Thinking…"}</p>
+                            <p className="text-slate-500">{message.statusText ?? "thinking..."}</p>
                           ) : (
                             <div className="prose prose-sm max-w-none dark:prose-invert">
                               <ChatMarkdown content={message.content || "…"} />

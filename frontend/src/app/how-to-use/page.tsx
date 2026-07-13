@@ -53,6 +53,15 @@ export default function HowToUsePage() {
         </InfoStep>
       </ol>
 
+      <div className="mt-8 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-7 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+        <p className="font-semibold">Demo note</p>
+        <p className="mt-1">
+          This deployment uses smaller backend limits (typically 5–10) for retrieval and deep review so
+          responses stay fast. Because this is a demo, search speed, cohort size, and match quality may
+          vary and results might be slightly inaccurate compared with a full production configuration.
+        </p>
+      </div>
+
       <div className="mt-8 panel">
         <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Quick tips</h3>
         <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-7 text-slate-600 dark:text-slate-300">

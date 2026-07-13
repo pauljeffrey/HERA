@@ -21,6 +21,11 @@ export function normalizeAssistantMarkdown(text: string): string {
   out = out.replace(/(\d)\s*--\s*(\d)/g, "$1–$2");
 
   out = out.replace(
+    /\[View audit dashboard\]\(\/audit\/([0-9a-f-]{36})(?!\))/gi,
+    (_, id: string) => auditLink(id),
+  );
+
+  out = out.replace(
     /\[[^\]]*\]\(\/audit\/([0-9a-f-]{36})[.)]*\)/gi,
     (_, id: string) => auditLink(id),
   );
@@ -32,7 +37,7 @@ export function normalizeAssistantMarkdown(text: string): string {
 
   out = out.replace(/\/audit\/([0-9a-f-]{36})[.)]*/gi, (match, id: string, offset: number, full: string) => {
     const before = full.slice(Math.max(0, offset - 2), offset);
-    if (before === "](") return `/audit/${id.toLowerCase()}`;
+    if (before === "](") return `/audit/${id.toLowerCase()})`;
     const normalized = id.toLowerCase();
     if (full.includes(`(/audit/${normalized})`)) return "";
     return auditLink(id);
