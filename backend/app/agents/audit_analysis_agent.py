@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import AsyncIterator
 
-from pydantic_ai import Agent, RunContext, UsageLimits
+from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimits
 
 from app.config import settings
 from app.models.agents import AuditCopilotDeps, AuditCopilotReply
@@ -12,14 +14,22 @@ from app.services.audit.audit_log import insert_audit_log_async
 from app.services.audit.task_storage import fetch_matching_task, update_matching_task
 from app.services.clinical.mock_data import EXTRACTED_FEATURES, get_patient_snapshot
 from app.services.clinical.patient_data import (
+    compute_cohort_statistic,
+    describe_database_schema,
+    execute_analytical_sql_query as run_analytical_sql_query,
+    fetch_patient_biodata,
     fetch_patient_notes,
     get_lab_result,
     get_patient_clinical_snapshot as build_patient_clinical_snapshot,
     get_patient_complete_timeline as build_patient_complete_timeline,
+    query_clinical_database_metadata as fetch_database_metadata,
     get_vitals,
     search_patient_notes,
 )
 from app.services.infra.redis_client import load_chat_history, save_chat_history
+from app.services.infra.stream_events import chunk_text
+
+logger = logging.getLogger(__name__)
 
 
 def _copilot_conversation_id(task_id: str, patient_id: str | None) -> str:
@@ -65,17 +75,27 @@ For every incoming query, you must process your reasoning inside a hidden `<thin
 ## 5. OVERRULE & COMPLIANCE LIFECYCLE
 When a clinician states they want to change a patient's eligibility status, enroll an excluded patient, or overrule a determination:
 1. **Enforce Rationale Capture:** You must explicitly demand or extract a clear clinical justification (e.g., "Creatinine elevation was transient due to acute sepsis, since resolved").
-2. **Execute Overrule Tool:** Call the `apply_clinician_override` tool using the structured rationale.
+2. **Execute Overrule Tool:** Once you have a rationale of at least 10 characters, call the `apply_clinician_override` tool with `override_status` set to `APPROVED` or `OVERRULED` as appropriate. Do not tell the clinician the override is complete until the tool succeeds.
 3. **Confirm Lineage:** Provide a confirmation message verifying that the choice, the clinician's signature, and the justification have been safely committed to the PostgreSQL compliance ledger.
 
 ---
 
 ## 6. RESPONSE FORMATTING & CONSTRAINTS
 - **Peer-to-Peer Language:** Use formal, advanced medical terminology. Avoid generic introductory filler ("That's a great question!"). Get straight to the analysis.
+- **Patient identity:** When asked for a patient's name, age, sex, or demographics, call `get_patient_biodata` and cite the returned `name` field directly. Never omit the legal name when it is available in tool output.
 - **No Hallucinations:** Never invent, extrapolate, or guess clinical values, trends, dates, or identifiers. If information is missing from the tool responses, state clearly: "Insufficient data returned via clinical database tools."
 - **Strict Data Units:** Every numerical clinical value must be accompanied by its standard medical unit (e.g., `mg/dL`, `pg/mL`, `mmHg`, `%`).
 - **Formulas in LaTeX:** Render all clinical mathematical bounds, equations, and physiological constraints using standard LaTeX block or inline notation (e.g., $LVEF \\ge 50\\%$ or $\\text{eGFR} < 30\\text{ mL/min/1.73m}^2$). Do not use unicode comparison symbols like ≤ or ≥ in regular text.
 - **Verbatim Evidence Quotes:** When referencing notes, extract the exact textual quote from the source document. Wrap it in a clean markdown blockquote (`>`) and append the precise encounter date.
+
+---
+
+## 7. DATABASE & COHORT ANALYTICS
+For population-level questions about the clinical database (table inventory, row counts, cohort statistics):
+1. **Table inventory / row counts** → `query_clinical_database_metadata`
+2. **Exact column names before SQL** → `get_database_schema` (never guess column names)
+3. **Aggregates over real columns** → `execute_analytical_sql_query` (read-only SELECT only)
+4. **Note-text prevalence** ("how many notes mention X") → `compute_database_statistic`
 """
 
 
@@ -103,6 +123,68 @@ def get_cohort_summary(ctx: RunContext[AuditCopilotDeps]) -> dict:
         "top_diagnoses": dashboard["top_diagnoses"],
         "search_metrics": dashboard["search_metrics"],
     }
+
+
+@agent.tool
+def query_clinical_database_metadata(ctx: RunContext[AuditCopilotDeps]) -> dict:
+    """Return table inventory and row counts for population-level analytics."""
+    logger.info("audit copilot tool: query_clinical_database_metadata")
+    return fetch_database_metadata()
+
+
+@agent.tool
+def get_database_schema(ctx: RunContext[AuditCopilotDeps]) -> dict:
+    """Return every table with exact column names, join hints, and gotchas."""
+    logger.info("audit copilot tool: get_database_schema")
+    return describe_database_schema()
+
+
+@agent.tool
+def execute_analytical_sql_query(
+    ctx: RunContext[AuditCopilotDeps],
+    sql_query: str,
+    limit: int = 100,
+) -> dict:
+    """Run a read-only SELECT for cohort analytics. Mutating SQL is rejected."""
+    logger.info("audit copilot tool: execute_analytical_sql_query sql=%r limit=%s", sql_query, limit)
+    try:
+        return run_analytical_sql_query(sql_query, limit=limit)
+    except Exception as exc:
+        logger.warning("execute_analytical_sql_query failed sql=%r: %s", sql_query, exc)
+        raise ModelRetry(
+            f"SQL failed: {exc}. Call get_database_schema for exact table/column names, then retry."
+        ) from exc
+
+
+@agent.tool
+def compute_database_statistic(
+    ctx: RunContext[AuditCopilotDeps],
+    metric: str,
+    aggregation: str = "count",
+    patient_ids: list[str] | None = None,
+) -> dict:
+    """Count how many patients' notes mention a free-text clinical term."""
+    logger.info("audit copilot tool: compute_database_statistic metric=%r aggregation=%r", metric, aggregation)
+    return compute_cohort_statistic(metric, patient_ids=patient_ids, aggregation=aggregation)
+
+
+@agent.tool
+def get_patient_biodata(ctx: RunContext[AuditCopilotDeps], patient_id: str) -> dict:
+    bound_id = patient_id or ctx.deps.patient_id
+    if not bound_id:
+        raise ValueError("patient_id is required")
+    row = fetch_patient_biodata(bound_id)
+    if not row:
+        raise ValueError(f"Patient {bound_id} not found in clinical database")
+    return row
+
+
+@agent.tool
+def get_patient_clinical_snapshot(ctx: RunContext[AuditCopilotDeps], patient_id: str) -> dict:
+    bound_id = patient_id or ctx.deps.patient_id
+    if not bound_id:
+        raise ValueError("patient_id is required")
+    return build_patient_clinical_snapshot(bound_id)
 
 
 @agent.tool
@@ -240,7 +322,7 @@ async def run_audit_analysis_agent(
         json.dumps(prompt, default=str),
         deps=deps,
         message_history=message_history,
-        usage_limits=UsageLimits(request_limit=12),
+        usage_limits=UsageLimits(request_limit=16),
     )
     await save_chat_history(conversation_id, result.all_messages())
     reply = result.output
@@ -252,3 +334,31 @@ async def run_audit_analysis_agent(
     if not reply.scope_label:
         reply.scope_label = scope
     return reply
+
+
+async def iter_audit_analysis_agent(
+    *,
+    task_id: str,
+    message: str,
+    patient_id: str | None = None,
+    user_id: str = "clinician-1",
+) -> AsyncIterator[dict]:
+    yield {"type": "status", "content": "Reviewing audit context…"}
+    reply = await run_audit_analysis_agent(
+        task_id=task_id,
+        message=message,
+        patient_id=patient_id,
+        user_id=user_id,
+    )
+    yield {"type": "status", "content": "Composing response…"}
+    for delta in chunk_text(reply.reply_markdown):
+        yield {"type": "delta", "content": delta}
+    yield {
+        "type": "done",
+        "reply": reply.reply_markdown,
+        "scope": reply.scope_label,
+        "suggested_chips": reply.suggested_chips,
+        "override_applied": reply.override_applied,
+        "updated_patient_id": reply.updated_patient_id,
+        "updated_overall_status": reply.updated_overall_status,
+    }
