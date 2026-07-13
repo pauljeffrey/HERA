@@ -180,7 +180,7 @@ export default function CommandCenter() {
   return (
     <div className="flex h-[calc(100vh-49px)] overflow-hidden bg-slate-100 dark:bg-slate-950">
       <div className="mx-auto flex h-full w-full max-w-7xl flex-col lg:flex-row">
-        <aside className="w-full shrink-0 overflow-y-auto border-b border-slate-200/70 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 lg:h-full lg:w-80 lg:border-b-0 lg:border-r">
+        <aside className="flex h-auto max-h-[45vh] w-full shrink-0 flex-col overflow-hidden border-b border-slate-200/70 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 lg:h-full lg:max-h-none lg:w-80 lg:border-b-0 lg:border-r">
           <TaskSidebar
             tasks={tasks}
             onTasksChange={handleTasksChange}
