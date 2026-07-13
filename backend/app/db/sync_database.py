@@ -1,4 +1,4 @@
-"""CLI: python -m app.db.sync_database [--reset]"""
+"""CLI: python -m app.db.sync_database [--reset|--sync]"""
 
 from __future__ import annotations
 
@@ -14,5 +14,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--reset":
         os.environ["PREPOPULATE_DB"] = "reset"
+        get_settings.cache_clear()
+    elif len(sys.argv) > 1 and sys.argv[1] == "--sync":
+        os.environ["PREPOPULATE_DB"] = "sync"
         get_settings.cache_clear()
     run_prepopulate()
