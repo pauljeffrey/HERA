@@ -13,6 +13,7 @@ from openai import APIConnectionError, OpenAI
 
 from hera_io.datasets import batch_response_content, load_json_list, write_json_dataset
 from hera_io.env import default_output_dir, load_openai_settings
+from hera_io.patient_ids import load_canonical_notes
 from structured_clinical_data.conditions import CLINICAL_CONDITION
 from structured_clinical_data.engine import (
     TERMINAL_BATCH_STATUSES,
@@ -25,6 +26,7 @@ from structured_clinical_data.engine import (
 load_dotenv()
 
 OUTPUT_DIR = default_output_dir("SOAP_OUTPUT_DIR", Path(__file__).resolve().parent / "output")
+CANONICAL_NOTES = "soap_progress_notes.json"
 DEFAULT_MAX_ENQUEUED_TOKENS = int(os.getenv("BATCH_MAX_ENQUEUED_TOKENS", "1800000"))
 RUN_STATE_FILE = "run_state.json"
 
@@ -141,6 +143,42 @@ def convert_structured_to_soap(
     if not content:
         raise RuntimeError(f"Empty SOAP response for {patient_profile['patient_id']} encounter {target_encounter_idx}")
     return content
+
+
+def canonical_notes_path(output_root: Path) -> Path:
+    return output_root / CANONICAL_NOTES
+
+
+def completed_soap_task_ids(notes: list[dict]) -> set[str]:
+    ids: set[str] = set()
+    for note in notes:
+        patient_id = note.get("patient_id")
+        if not patient_id or not (note.get("soap_note") or "").strip():
+            continue
+        ids.add(f"{patient_id}-enc-{int(note['encounter_index'])}")
+    return ids
+
+
+def filter_pending_soap_tasks(tasks: list[SoapTask], completed_ids: set[str]) -> list[SoapTask]:
+    if not completed_ids:
+        return tasks
+    return [task for task in tasks if task.custom_id not in completed_ids]
+
+
+def merge_notes_into_canonical(output_root: Path, notes: list[dict]) -> Path:
+    canonical = canonical_notes_path(output_root)
+    existing = load_canonical_notes(canonical)
+    by_key = {
+        (note["patient_id"], int(note["encounter_index"])): note
+        for note in existing
+        if note.get("patient_id") is not None
+    }
+    for note in notes:
+        key = (note["patient_id"], int(note["encounter_index"]))
+        by_key[key] = note
+    merged = sorted(by_key.values(), key=lambda row: (row["patient_id"], int(row["encounter_index"])))
+    write_dataset(merged, canonical)
+    return canonical
 
 
 def plan_soap_tasks(patients: list[dict]) -> list[SoapTask]:
@@ -625,7 +663,9 @@ def process_run(
         notes, failures = merge_completed_notes(run_dir, state)
         dataset_path = run_dir / "datasets" / "soap_progress_notes.json"
         write_dataset(notes, dataset_path)
+        canonical = merge_notes_into_canonical(OUTPUT_DIR, notes)
         print(f"Merged {len(notes)} SOAP notes into {dataset_path}")
+        print(f"Updated canonical notes: {canonical}")
         if failures:
             failure_path = run_dir / "datasets" / "parse_failures.json"
             failure_path.write_text(json.dumps(failures, indent=2), encoding="utf-8")

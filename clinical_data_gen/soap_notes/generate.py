@@ -13,9 +13,14 @@ if str(_ROOT) not in sys.path:
 
 from openai import OpenAI
 
+from hera_io.patient_ids import load_canonical_notes
+
 from soap_notes.engine import (
     build_run_state,
+    canonical_notes_path,
     chunk_tasks_for_state,
+    completed_soap_task_ids,
+    filter_pending_soap_tasks,
     find_resumable_run,
     load_patients,
     load_run_state,
@@ -54,6 +59,11 @@ def main() -> int:
     parser.add_argument("--submit", action="store_true", help="Upload and create batch job(s).")
     parser.add_argument("--wait", action="store_true", help="Poll until each submitted chunk finishes.")
     parser.add_argument("--poll-interval", type=int, default=30)
+    parser.add_argument(
+        "--only-new",
+        action="store_true",
+        help="Skip encounters already present in the canonical SOAP notes file.",
+    )
     args = parser.parse_args()
 
     cfg = settings(
@@ -80,8 +90,20 @@ def main() -> int:
         model = cfg["model"] if args.model else state["model"]
     else:
         patients = load_patients(args.input)
+        all_tasks = plan_soap_tasks(patients)
+        if args.only_new:
+            canonical = canonical_notes_path(output_root)
+            completed = completed_soap_task_ids(load_canonical_notes(canonical))
+            tasks = filter_pending_soap_tasks(all_tasks, completed)
+            skipped = len(all_tasks) - len(tasks)
+            if skipped:
+                print(f"Skipping {skipped} encounters already in {canonical}")
+        else:
+            tasks = all_tasks
+        if not tasks:
+            print("No new SOAP tasks to run.")
+            return 0
         patients_by_id = {patient["patient_id"]: patient for patient in patients}
-        tasks = plan_soap_tasks(patients)
         model = cfg["model"]
         max_tokens = cfg["max_enqueued_tokens"]
 

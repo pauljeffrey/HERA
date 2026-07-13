@@ -13,7 +13,10 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import ValidationError
 
-from hera_io.datasets import batch_response_content, write_json_dataset
+from datetime import datetime, timezone
+
+from hera_io.datasets import batch_response_content, load_json_list, write_json_dataset
+from hera_io.patient_ids import load_canonical_patients, max_patient_index, merge_records_by_id
 from hera_io.env import default_output_dir, load_openai_settings
 from structured_clinical_data.conditions import CLINICAL_CONDITION
 from structured_clinical_data.schemas import PatientTrajectory
@@ -21,6 +24,8 @@ from structured_clinical_data.schemas import PatientTrajectory
 load_dotenv()
 
 OUTPUT_DIR = default_output_dir("DATASET_OUTPUT_DIR", Path(__file__).resolve().parent / "output")
+CANONICAL_DATASET = "patient_trajectories.json"
+RUN_STATE_FILE = "run_state.json"
 TERMINAL_BATCH_STATUSES = {"completed", "failed", "expired", "cancelled"}
 
 SPECIALTY_RATIOS = {
@@ -87,8 +92,14 @@ class Task:
         return f"task-{self.index:06d}"
 
 
-def plan_tasks(total: int, seed: int = 42) -> list[Task]:
+def canonical_dataset_path(output_root: Path) -> Path:
+    return output_root / CANONICAL_DATASET
+
+
+def plan_tasks(total: int, seed: int = 42, *, start_index: int = 1) -> list[Task]:
     """Build a shuffled task list that hits the target specialty ratios exactly."""
+    if total <= 0:
+        return []
     raw = {key: total * ratio for key, ratio in SPECIALTY_RATIOS.items()}
     counts = {key: int(value) for key, value in raw.items()}
     for key, _ in sorted(raw.items(), key=lambda item: item[1] - counts[item[0]], reverse=True):
@@ -98,7 +109,7 @@ def plan_tasks(total: int, seed: int = 42) -> list[Task]:
 
     rng = random.Random(seed)
     tasks: list[Task] = []
-    index = 0
+    index = start_index - 1
     for specialty_key, count in counts.items():
         for _ in range(count):
             index += 1
@@ -112,6 +123,63 @@ def plan_tasks(total: int, seed: int = 42) -> list[Task]:
             )
     rng.shuffle(tasks)
     return tasks
+
+
+def resume_start_index(output_root: Path, target_count: int) -> tuple[int, int]:
+    """Return (next_patient_index, remaining_count) from the canonical dataset."""
+    canonical = canonical_dataset_path(output_root)
+    existing = load_canonical_patients(canonical)
+    last_index = max_patient_index(existing)
+    if last_index >= target_count:
+        return target_count + 1, 0
+    return last_index + 1, target_count - last_index
+
+
+def init_run_state(*, target_count: int, start_index: int, batch_count: int, model: str) -> dict:
+    return {
+        "version": 1,
+        "target_count": target_count,
+        "start_index": start_index,
+        "batch_count": batch_count,
+        "model": model,
+        "status": "pending",
+        "batch_id": None,
+        "batch_status": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def save_run_state(run_dir: Path, state: dict) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / RUN_STATE_FILE).write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def load_run_state(run_dir: Path) -> dict:
+    path = run_dir / RUN_STATE_FILE
+    if not path.exists():
+        raise FileNotFoundError(f"Missing {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def find_resumable_run(output_root: Path) -> Path | None:
+    candidates: list[tuple[str, Path]] = []
+    for state_path in output_root.glob(f"*/{RUN_STATE_FILE}"):
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if state.get("status") == "completed":
+            continue
+        candidates.append((state.get("created_at", ""), state_path.parent))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def merge_into_canonical(output_root: Path, new_records: list[dict]) -> Path:
+    canonical = canonical_dataset_path(output_root)
+    existing = load_canonical_patients(canonical) if canonical.exists() else []
+    merged = merge_records_by_id(existing, new_records, id_key="patient_id")
+    write_dataset(merged, canonical)
+    return canonical
 
 
 def specialty_counts(tasks: list[Task]) -> dict[str, int]:
