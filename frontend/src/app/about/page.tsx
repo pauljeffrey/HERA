@@ -41,6 +41,38 @@ export default function AboutPage() {
           </p>
         </InfoCard>
 
+        <InfoCard title="Synthetic data & Supabase" icon="🧬">
+          <p>
+            All patients in this demo are generated — not real EHR records. The pipeline has three stages:
+          </p>
+          <ol className="list-decimal space-y-2 pl-5">
+            <li>
+              <strong>Structured trajectories</strong> — <code className="text-xs">clinical_data_gen/structured_clinical_data</code>{" "}
+              uses the OpenAI Batch API to produce longitudinal patient JSON: demographics, encounters,
+              diagnoses, medications, labs, and investigations across cardiovascular, oncology, and ICU
+              specialties.
+            </li>
+            <li>
+              <strong>SOAP notes</strong> — <code className="text-xs">clinical_data_gen/soap_notes</code>{" "}
+              converts each structured encounter into unstructured SOAP progress notes (again via Batch API),
+              so the search funnel has realistic clinical prose to index.
+            </li>
+            <li>
+              <strong>Load into Supabase</strong> — <code className="text-xs">backend/app/db/schema.sql</code>{" "}
+              defines the Postgres tables. On startup, the backend prepopulate service reads the generated
+              JSON datasets and upserts rows into Supabase over the REST API (
+              <code className="text-xs">PREPOPULATE_DB=if_empty</code> by default). A separate embedding
+              ingest step (<code className="text-xs">scripts/ingest_ehr</code>) chunks those notes and
+              indexes them in Pinecone (or pgvector) for semantic search.
+            </li>
+          </ol>
+          <p>
+            Paths to the canonical JSON files are configured via{" "}
+            <code className="text-xs">PATIENT_TRAJECTORIES_PATH</code> and{" "}
+            <code className="text-xs">SOAP_NOTES_PATH</code> in the backend environment.
+          </p>
+        </InfoCard>
+
         <InfoCard title="System design (simple view)" icon="🏗️">
           <ul className="list-disc space-y-2 pl-5">
             <li>
@@ -95,9 +127,11 @@ export default function AboutPage() {
           <ul className="list-disc space-y-2 pl-5">
             <li>
               <strong>Demo tuning</strong> — this deployment uses smaller backend limits (typically in the
-              5–10 range for retrieval and deep-review caps) so searches return faster. That keeps the demo
-              responsive, but results and performance may vary compared with a full production run and can be
-              slightly less accurate.
+              5–10 range) so searches return faster. Deep review is hard-capped by{" "}
+              <code className="text-xs">TIER3_PATIENT_CAP</code> (
+              <code className="text-xs">min(n_candidates, TIER3_PATIENT_CAP)</code> patients reach the
+              analysis agent). Retrieval limits may also be reduced. Results and performance may vary and can
+              be slightly less accurate than a full production run.
             </li>
             <li>
               <strong>Speed vs. depth</strong> — the funnel caps how many patients get a full chart review
