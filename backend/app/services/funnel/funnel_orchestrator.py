@@ -101,6 +101,12 @@ def _patient_rank_key(
     return (strict_pass, soft_observed, semantic, latest)
 
 
+def _tier3_cap(payload: SearchCriteria, settings) -> int:
+    if payload.n_candidates is not None and payload.n_candidates > 0:
+        return payload.n_candidates
+    return settings.tier3_patient_cap
+
+
 async def run_fts_vector_filter(payload: SearchCriteria) -> tuple[list[PatientTimeline], FunnelMetrics]:
     """Run FTS and vector retrieval concurrently, merge, rank, then cap for Tier 3."""
     settings = get_settings()
@@ -154,7 +160,8 @@ async def run_fts_vector_filter(payload: SearchCriteria) -> tuple[list[PatientTi
         ),
         reverse=True,
     )
-    timelines = timelines[: settings.tier3_patient_cap]
+    cap = _tier3_cap(payload, settings)
+    timelines = timelines[:cap]
 
     raw_search_space = fetch_unique_patient_count()
     metrics = FunnelMetrics(
@@ -168,6 +175,6 @@ async def run_fts_vector_filter(payload: SearchCriteria) -> tuple[list[PatientTi
         len(merged),
         len(survivors),
         len(timelines),
-        settings.tier3_patient_cap,
+        cap,
     )
     return timelines, metrics
