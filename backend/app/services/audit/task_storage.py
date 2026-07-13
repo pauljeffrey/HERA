@@ -6,6 +6,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.db.supabase_client import get_supabase_client
+from app.services.audit.task_ids import normalize_task_id
 from app.services.infra.redis_client import get_task_state, set_task_state
 
 
@@ -61,6 +62,11 @@ async def update_matching_task(task_id: str, **fields: Any) -> None:
 
 
 async def fetch_matching_task(task_id: str) -> dict | None:
+    try:
+        task_id = normalize_task_id(task_id)
+    except ValueError:
+        return None
+
     cached = await get_task_state(task_id)
     if cached:
         return cached

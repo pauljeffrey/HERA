@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 
 from app.models.ledger import TrialMatchAuditLedger
-from app.models.patients import ExtractedFeature, PatientEncounterNote
+from app.models.patients import ExtractedFeature, PatientBiodata, PatientEncounterNote
 from app.services.audit.ledger_utils import top_diagnoses
 from app.services.clinical.mock_data import EXTRACTED_FEATURES, get_patient_snapshot
-from app.services.clinical.patient_data import fetch_patient_notes
+from app.services.clinical.patient_data import fetch_patient_biodata, fetch_patient_notes
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,8 @@ def build_dashboard(task: dict) -> dict:
     for audit in ledger.patients:
         encounters = _load_encounters(audit.patient_id)
         features = _load_features(audit.patient_id)
+        biodata_row = fetch_patient_biodata(audit.patient_id)
+        biodata = PatientBiodata.model_validate(biodata_row) if biodata_row else None
         patients_out.append(
             {
                 "patient_id": audit.patient_id,
@@ -70,6 +72,7 @@ def build_dashboard(task: dict) -> dict:
                 "encounters": [enc.model_dump() for enc in encounters],
                 "extracted_features": [feat.model_dump() for feat in features],
                 "override_status": None,
+                "biodata": biodata.model_dump() if biodata else None,
             }
         )
 
