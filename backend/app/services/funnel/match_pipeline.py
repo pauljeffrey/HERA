@@ -61,8 +61,7 @@ async def run_matching_pipeline(
         )
         summary = ledger.model_dump()
         summary["cohort_size"] = len(patient_audits)
-        n_candidates = (search_payload.n_candidates or settings.n_final_candidates)
-        summary["patient_ids_preview"] = [audit.patient_id for audit in patient_audits[:n_candidates]]
+        summary["patient_ids_preview"] = [audit.patient_id for audit in patient_audits]
         summary["top_diagnoses"] = top_diagnoses(patient_audits)
 
         for audit in patient_audits:

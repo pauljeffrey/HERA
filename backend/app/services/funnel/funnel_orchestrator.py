@@ -4,7 +4,7 @@ Chunks only ever carry identifiers (patient_id, encounter_id, chunk_id) —
 text is hydrated lazily via `search.fetch_encounter_text`, and only for the
 merged FTS+VS candidate set (bounded by FTS_TOP_K / SEMANTIC_TOP_K).
 
-The windowed math guard ranks survivors before `TIER3_PATIENT_CAP` — it does
+The windowed math guard ranks survivors before the Tier 3 cap — it does
 not filter anyone out. Qualitative-only notes ("creatinine elevated") may rank
 lower but still reach Tier 3 when the cap allows; the analysis agent remains
 the source of truth for eligibility.
@@ -102,9 +102,12 @@ def _patient_rank_key(
 
 
 def _tier3_cap(payload: SearchCriteria, settings) -> int:
-    if payload.n_candidates is not None and payload.n_candidates > 0:
-        return payload.n_candidates
-    return settings.tier3_patient_cap
+    """Hard ceiling for Agent 2 evaluations: min(requested, TIER3_PATIENT_CAP)."""
+    hard_cap = settings.tier3_patient_cap
+    requested = payload.n_candidates
+    if requested is not None and requested > 0:
+        return min(requested, hard_cap)
+    return hard_cap
 
 
 async def run_fts_vector_filter(payload: SearchCriteria) -> tuple[list[PatientTimeline], FunnelMetrics]:
