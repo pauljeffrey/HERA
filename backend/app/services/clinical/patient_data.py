@@ -202,6 +202,92 @@ def get_investigation_result(
     }
 
 
+def _labs_for_encounter(encounter_db_id: str | int) -> list[dict[str, Any]]:
+    settings = get_settings()
+    if settings.database_mode == "supabase":
+        labs: list[dict[str, Any]] = []
+        panels = (
+            get_supabase_client()
+            .table("lab_panels")
+            .select("id, panel_name")
+            .eq("encounter_id", encounter_db_id)
+            .execute()
+        ).data or []
+        for panel in panels:
+            rows = (
+                get_supabase_client()
+                .table("lab_results")
+                .select("test_name, test_value")
+                .eq("lab_panel_id", panel["id"])
+                .execute()
+            ).data or []
+            for row in rows:
+                labs.append(
+                    {
+                        "panel": panel.get("panel_name"),
+                        "test_name": row.get("test_name") or "",
+                        "test_value": row.get("test_value") or "",
+                    }
+                )
+        return labs
+    try:
+        return _fetch_labs_postgres(encounter_db_id)
+    except Exception:
+        return []
+
+
+def _investigations_for_encounter(encounter_db_id: str | int) -> list[str]:
+    settings = get_settings()
+    if settings.database_mode == "supabase":
+        rows = (
+            get_supabase_client()
+            .table("encounter_investigations")
+            .select("investigation")
+            .eq("encounter_id", encounter_db_id)
+            .execute()
+        ).data or []
+        return [row["investigation"] for row in rows if row.get("investigation")]
+    try:
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT investigation FROM encounter_investigations WHERE encounter_id = %s",
+                (encounter_db_id,),
+            )
+            return [row[0] for row in cur.fetchall()]
+    except Exception:
+        return []
+
+
+def fetch_patient_clinical_record(patient_id: str) -> dict[str, Any] | None:
+    """Encounters, labs, and investigations for quick chart lookup by patient ID."""
+    patient_id = patient_id.strip().upper()
+    biodata = fetch_patient_biodata(patient_id)
+    if not biodata:
+        return None
+
+    notes_by_index = {
+        int(note.get("encounter_index", 0)): note for note in fetch_patient_notes(patient_id)
+    }
+    encounters_out: list[dict[str, Any]] = []
+    for enc in sorted(_fetch_encounters(patient_id), key=lambda row: int(row.get("encounter_index", 0))):
+        index = int(enc.get("encounter_index", 0))
+        note = notes_by_index.get(index, {})
+        soap = note.get("soap_note") or ""
+        encounters_out.append(
+            {
+                "encounter_id": str(enc.get("encounter_id") or ""),
+                "encounter_index": index,
+                "encounter_type": str(note.get("encounter_type") or enc.get("encounter_type") or "Encounter"),
+                "occurred_at": str(enc.get("occurred_at") or note.get("created_at") or "") or None,
+                "soap_excerpt": soap[:480] + ("…" if len(soap) > 480 else ""),
+                "labs": _labs_for_encounter(enc["id"]),
+                "investigations": _investigations_for_encounter(enc["id"]),
+            }
+        )
+
+    return {"biodata": biodata, "encounters": encounters_out}
+
+
 def fetch_patient_notes(patient_id: str) -> list[dict[str, Any]]:
     if get_settings().database_mode == "supabase":
         rows = (

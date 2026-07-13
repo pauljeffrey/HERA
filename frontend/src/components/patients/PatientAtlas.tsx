@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import PatientLookupSidebar from "@/components/patients/PatientLookupSidebar";
 import { fetchPatient, fetchPatients, type PatientSnapshot } from "@/lib/api";
 
 type PatientCard = {
@@ -41,17 +42,20 @@ export default function PatientAtlas() {
           <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Synthetic Cohort</p>
           <h1 className="text-3xl font-semibold text-slate-900 dark:text-slate-100">Patient Atlas</h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-500">
-            Browse demo EHR snapshots before dispatching trial matches. Each card opens a full chart room with SOAP
-            timelines, extracted features, and the audit trail.
+            Browse demo EHR snapshots before dispatching trial matches. Use the patient lookup panel to pull
+            encounters, labs, and investigations by ID while you chat in the Command Center.
           </p>
         </div>
       </header>
 
-      <div className="mx-auto max-w-7xl p-6">
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
-        {loading ? <p className="text-sm text-slate-500">Loading patient snapshots…</p> : null}
+      <div className="mx-auto flex max-w-7xl flex-col lg:flex-row">
+        <PatientLookupSidebar />
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="min-w-0 flex-1 p-6">
+          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          {loading ? <p className="text-sm text-slate-500">Loading patient snapshots…</p> : null}
+
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {cards.map(({ id, snapshot }) => {
             const eligible = snapshot?.audit_payload.selected_patients.find((p) => p.patient_id === id);
             const encounterCount = snapshot?.encounters.length ?? 0;
@@ -102,6 +106,7 @@ export default function PatientAtlas() {
               </Link>
             );
           })}
+          </div>
         </div>
       </div>
     </div>

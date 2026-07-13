@@ -30,7 +30,7 @@ type ChatMessage = StoredChatMessage & {
 };
 
 const WELCOME =
-  "I'm your HERA assistant. Ask clinical questions, explore trial criteria, or paste inclusion and exclusion rules — I'll help you think through them.";
+  "I'm your HERA assistant. Ask clinical questions, explore trial criteria, or paste inclusion and exclusion rules. I'll help you think through them.";
 
 export default function CommandCenter() {
   const searchParams = useSearchParams();

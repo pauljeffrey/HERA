@@ -19,20 +19,26 @@ export default function HowToUsePage() {
         </InfoStep>
 
         <InfoStep step={2} title="Pick a patient to explore">
-          In the left sidebar, expand <strong>Patient roulette</strong> and click <strong>Draw patient</strong>.
-          You will see their name, ID, age, sex, specialty, and encounter count. Hit{" "}
-          <strong>Discuss this patient</strong> to bind that patient to your chat — then ask about meds, labs,
-          trends, or eligibility.
+          In the Command Center sidebar, expand <strong>Patient roulette</strong> and click{" "}
+          <strong>Draw patient</strong>. You will see their name, ID, age, sex, specialty, and encounter count.
+          Hit <strong>Discuss this patient</strong> to bind that patient to your chat, then ask about meds, labs,
+          trends, or eligibility. To double-check what HERA is citing, open{" "}
+          <Link href="/patients" className="font-medium text-emerald-700 underline">
+            Patient Atlas
+          </Link>{" "}
+          and use the collapsible <strong>Patient lookup</strong> panel on the left — enter the ID (e.g.{" "}
+          <code className="text-emerald-700">PT-000541</code>) to view encounters, labs, and investigations from
+          the backend before returning to the chat.
         </InfoStep>
 
         <InfoStep step={3} title="Run a trial search">
           Paste inclusion and exclusion rules (e.g. LVEF ≤ 35%, age 18–80). Not sure where to start? In the
           sidebar, expand <strong>Criteria roulette</strong> and click <strong>Draw criterion</strong> for a
-          random example you can use as-is or adapt — then hit <strong>Use in conversation</strong> to drop it
+          random example you can use as-is or adapt, then hit <strong>Use in conversation</strong> to drop it
           into the chat. HERA parses your rules, starts a background search, and gives you an audit link.
           Watch the progress bar in chat or open the audit dashboard from <strong>Recent searches</strong> in the
           left sidebar (below the roulettes). Every search you run is listed there, so you can return to any
-          audit later — even after starting a new conversation.
+          audit later, even after starting a new conversation.
         </InfoStep>
 
         <InfoStep step={4} title="Review the audit dashboard">

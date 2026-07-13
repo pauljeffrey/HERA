@@ -98,3 +98,24 @@ class PatientBiodata(BaseModel):
 class RandomPatientResponse(BaseModel):
     total_patients: int = 0
     patient: PatientBiodata | None = None
+
+
+class LabResultRow(BaseModel):
+    panel: str | None = None
+    test_name: str
+    test_value: str
+
+
+class PatientEncounterRecord(BaseModel):
+    encounter_id: str
+    encounter_index: int
+    encounter_type: str = ""
+    occurred_at: str | None = None
+    soap_excerpt: str = ""
+    labs: list[LabResultRow] = Field(default_factory=list)
+    investigations: list[str] = Field(default_factory=list)
+
+
+class PatientClinicalRecord(BaseModel):
+    biodata: PatientBiodata
+    encounters: list[PatientEncounterRecord] = Field(default_factory=list)

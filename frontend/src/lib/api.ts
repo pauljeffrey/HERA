@@ -112,6 +112,27 @@ export type PatientBiodata = {
   encounter_count: number;
 };
 
+export type LabResultRow = {
+  panel?: string | null;
+  test_name: string;
+  test_value: string;
+};
+
+export type PatientEncounterRecord = {
+  encounter_id: string;
+  encounter_index: number;
+  encounter_type: string;
+  occurred_at?: string | null;
+  soap_excerpt: string;
+  labs: LabResultRow[];
+  investigations: string[];
+};
+
+export type PatientClinicalRecord = {
+  biodata: PatientBiodata;
+  encounters: PatientEncounterRecord[];
+};
+
 export type RandomCriterionResponse = {
   source: string;
   count: number;
@@ -406,6 +427,13 @@ export async function fetchPatientBiodata(patientId: string) {
   const res = await fetch(`${API_BASE}/patients/${id}/biodata`, { cache: "no-store" });
   if (!res.ok) await parseError(res, "Failed to load patient biodata");
   return res.json() as Promise<PatientBiodata>;
+}
+
+export async function fetchPatientRecord(patientId: string) {
+  const id = patientId.trim().toUpperCase();
+  const res = await fetch(`${API_BASE}/patients/${id}/record`, { cache: "no-store" });
+  if (!res.ok) await parseError(res, "Failed to load patient record");
+  return res.json() as Promise<PatientClinicalRecord>;
 }
 
 export async function fetchPatient(patientId: string, trialId?: string) {
