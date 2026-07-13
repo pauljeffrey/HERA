@@ -135,6 +135,10 @@ function DashboardBody({ taskId: rawTaskId }: { taskId: string }) {
                 ? `Matching in progress (${dashboard.progress_percentage}%)…`
                 : `Cohort: ${dashboard?.cohort_size ?? 0} patients`}
             </p>
+            <p className="mt-1 max-w-xl text-xs leading-5 text-slate-400">
+              Matched candidates are reduced to a max of 3–5 patients for deep LLM review to save cost and
+              time in this demo.
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button

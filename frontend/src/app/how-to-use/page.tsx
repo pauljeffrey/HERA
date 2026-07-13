@@ -38,13 +38,15 @@ export default function HowToUsePage() {
           into the chat. HERA parses your rules, starts a background search, and gives you an audit link.
           Watch the progress bar in chat or open the audit dashboard from <strong>Recent searches</strong> in the
           left sidebar (below the roulettes). Every search you run is listed there, so you can return to any
-          audit later, even after starting a new conversation.
+          audit later, even after starting a new conversation. For cost and speed in this demo, retrieval is
+          narrowed to a max of <strong>3–5 candidates</strong> for full LLM chart review — you will not see a
+          large unreviewed cohort in the audit dashboard.
         </InfoStep>
 
         <InfoStep step={4} title="Review the audit dashboard">
-          Pick a candidate patient. Read their SOAP timeline, metric matrix, and criterion-by-criterion
-          ledger. Toggle the copilot to ask follow-up questions. If you disagree with a verdict, use{" "}
-          <strong>Overrule Verdict</strong> and add a short rationale.
+          The dashboard lists the capped shortlist (up to 3–5 patients). Pick a candidate, then read their SOAP
+          timeline and criterion-by-criterion ledger. Toggle the copilot to ask follow-up questions. If you
+          disagree with a verdict, use <strong>Overrule Verdict</strong> and add a short rationale.
         </InfoStep>
 
         <InfoStep step={5} title="Charts and analytics">
@@ -65,9 +67,9 @@ export default function HowToUsePage() {
       <div className="mt-8 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-7 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
         <p className="font-semibold">Demo note</p>
         <p className="mt-1">
-          This deployment uses smaller backend limits (typically 5–10) for retrieval and deep review so
-          responses stay fast. Because this is a demo, search speed, cohort size, and match quality may
-          vary and results might be slightly inaccurate compared with a full production configuration.
+          This deployment caps deep review at about <strong>3–5 patients</strong> (and uses smaller retrieval
+          limits) so searches stay affordable and responsive. Search speed, cohort size, and match quality may
+          vary, and results might be slightly less complete than a full production run.
         </p>
       </div>
 
