@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic_ai.exceptions import ModelHTTPError
 
-from app.agents.audit_analysis_agent import run_audit_analysis_agent
+from app.agents.audit_analysis_agent import iter_audit_analysis_agent, run_audit_analysis_agent
 from app.models.audit import (
     AuditCopilotRequest,
     AuditCopilotResponse,
@@ -12,8 +14,27 @@ from app.models.audit import (
 from app.services.audit.audit_dashboard import apply_patient_override, build_dashboard
 from app.services.audit.audit_log import fetch_audit_logs, insert_audit_log_async
 from app.services.audit.task_storage import fetch_matching_task, update_matching_task
+from app.services.infra.stream_events import sse_payloads
 
 router = APIRouter(prefix="/audit", tags=["audit"])
+
+
+def _copilot_http_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, ValueError):
+        return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, ModelHTTPError):
+        if exc.status_code == 429:
+            return HTTPException(
+                status_code=503,
+                detail="The model provider is temporarily rate-limited. Please retry in a minute.",
+            )
+        if exc.status_code in (401, 403):
+            return HTTPException(
+                status_code=503,
+                detail="Model API authentication failed. Check MODEL_API_KEY on the server.",
+            )
+        return HTTPException(status_code=502, detail=f"Audit copilot failed (HTTP {exc.status_code}).")
+    return HTTPException(status_code=502, detail=f"Audit copilot failed: {exc}")
 
 
 def _validate_override(body: ClinicianOverrideRequest) -> None:
@@ -43,7 +64,7 @@ async def audit_copilot(task_id: str, body: AuditCopilotRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Audit copilot failed: {exc}") from exc
+        raise _copilot_http_error(exc) from exc
 
     return AuditCopilotResponse(
         reply=reply.reply_markdown,
@@ -52,6 +73,28 @@ async def audit_copilot(task_id: str, body: AuditCopilotRequest):
         override_applied=reply.override_applied,
         updated_patient_id=reply.updated_patient_id,
         updated_overall_status=reply.updated_overall_status,
+    )
+
+
+@router.post("/tasks/{task_id}/copilot/stream")
+async def audit_copilot_stream(task_id: str, body: AuditCopilotRequest):
+    async def event_stream():
+        try:
+            async for event in iter_audit_analysis_agent(
+                task_id=task_id,
+                message=body.message,
+                patient_id=body.patient_id,
+                user_id=body.user_id,
+            ):
+                yield event
+        except Exception as exc:
+            http_exc = _copilot_http_error(exc)
+            yield {"type": "error", "content": http_exc.detail}
+
+    return StreamingResponse(
+        sse_payloads(event_stream()),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
