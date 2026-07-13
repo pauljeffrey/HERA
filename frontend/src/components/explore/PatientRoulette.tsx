@@ -63,16 +63,16 @@ export default function PatientRoulette({
             : "rounded-3xl border border-slate-200/60 bg-white/90 p-8 text-center shadow-lg backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/80"
         }
       >
-        <div className="flex flex-wrap items-center gap-3">
-          <div
-            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-2xl ${
-              spinning ? "animate-pulse bg-emerald-100" : "bg-white dark:bg-slate-800"
-            }`}
-          >
-            {spinning ? SPIN_FRAMES[frame] : picked ? "✓" : "?"}
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-slate-800 dark:text-slate-100">
+        <div className={inSidebar ? "flex flex-col gap-3" : "flex flex-wrap items-center gap-3"}>
+          <div className={inSidebar ? "flex items-start gap-3" : "contents"}>
+            <div
+              className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-2xl ${
+                spinning ? "animate-pulse bg-emerald-100" : "bg-white dark:bg-slate-800"
+              }`}
+            >
+              {spinning ? SPIN_FRAMES[frame] : picked ? "✓" : "?"}
+            </div>
+            <p className="min-w-0 flex-1 text-sm font-medium leading-snug text-slate-800 dark:text-slate-100">
               Explore a patient? Draw someone at random from the synthetic cohort
               {totalPatients ? ` (${totalPatients.toLocaleString()} total)` : ""}.
             </p>
@@ -81,7 +81,9 @@ export default function PatientRoulette({
             type="button"
             disabled={spinning}
             onClick={spin}
-            className="shrink-0 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:opacity-50"
+            className={`shrink-0 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:opacity-50 ${
+              inSidebar ? "w-full" : ""
+            }`}
           >
             {spinning ? "Drawing…" : "Draw patient"}
           </button>
@@ -98,7 +100,7 @@ export default function PatientRoulette({
                 {picked.encounter_count} encounter{picked.encounter_count === 1 ? "" : "s"}
               </span>
             </div>
-            <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
+            <dl className={`mt-3 grid gap-x-4 gap-y-2 text-sm ${inSidebar ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-4"}`}>
               <div>
                 <dt className="text-xs uppercase tracking-wide text-slate-500">Age</dt>
                 <dd className="font-medium text-slate-800 dark:text-slate-100">{picked.age}</dd>
@@ -117,7 +119,9 @@ export default function PatientRoulette({
             <button
               type="button"
               onClick={usePatient}
-              className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+              className={`mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 dark:bg-emerald-700 dark:hover:bg-emerald-600 ${
+                inSidebar ? "w-full" : ""
+              }`}
             >
               Discuss this patient
             </button>

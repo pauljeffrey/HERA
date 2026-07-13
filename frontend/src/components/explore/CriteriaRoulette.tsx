@@ -60,16 +60,16 @@ export default function CriteriaRoulette({
             : "rounded-3xl border border-slate-200/60 bg-white/90 p-8 text-center shadow-lg backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/80"
         }
       >
-        <div className="flex flex-wrap items-center gap-3">
-          <div
-            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-2xl ${
-              spinning ? "animate-pulse bg-emerald-100" : "bg-white dark:bg-slate-800"
-            }`}
-          >
-            {spinning ? SPIN_FRAMES[frame] : picked ? "✓" : "?"}
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-slate-800 dark:text-slate-100">
+        <div className={inSidebar ? "flex flex-col gap-3" : "flex flex-wrap items-center gap-3"}>
+          <div className={inSidebar ? "flex items-start gap-3" : "contents"}>
+            <div
+              className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-2xl ${
+                spinning ? "animate-pulse bg-emerald-100" : "bg-white dark:bg-slate-800"
+              }`}
+            >
+              {spinning ? SPIN_FRAMES[frame] : picked ? "✓" : "?"}
+            </div>
+            <p className="min-w-0 flex-1 text-sm font-medium leading-snug text-slate-800 dark:text-slate-100">
               Need inspiration? Draw a random trial criterion from the synthetic cohort.
             </p>
           </div>
@@ -77,7 +77,9 @@ export default function CriteriaRoulette({
             type="button"
             disabled={spinning}
             onClick={spin}
-            className="shrink-0 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:opacity-50"
+            className={`shrink-0 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:opacity-50 ${
+              inSidebar ? "w-full" : ""
+            }`}
           >
             {spinning ? "Drawing…" : "Draw criterion"}
           </button>
@@ -85,11 +87,13 @@ export default function CriteriaRoulette({
 
         {picked ? (
           <div className="mt-4 rounded-xl border border-emerald-200 bg-white p-4 dark:border-emerald-900 dark:bg-slate-950/60">
-            <p className="text-sm leading-7 text-slate-800 dark:text-slate-100">{picked.text}</p>
+            <p className="break-words text-sm leading-relaxed text-slate-800 dark:text-slate-100">{picked.text}</p>
             <button
               type="button"
               onClick={useCriterion}
-              className="mt-3 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+              className={`mt-3 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 dark:bg-emerald-700 dark:hover:bg-emerald-600 ${
+                inSidebar ? "w-full" : ""
+              }`}
             >
               Use in conversation
             </button>
