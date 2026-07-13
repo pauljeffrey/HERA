@@ -301,11 +301,40 @@ def upsert_chunks_pg(chunks: list[TextChunk], embeddings: list[list[float]]) -> 
     return len(rows)
 
 
+def fetch_ingested_patient_ids(client) -> set[str]:
+    ids: set[str] = set()
+    offset = 0
+    while True:
+        result = (
+            client.table("patient_notes_embeddings")
+            .select("patient_id")
+            .range(offset, offset + PAGE_SIZE - 1)
+            .execute()
+        )
+        rows = result.data or []
+        if not rows:
+            break
+        ids.update(row["patient_id"] for row in rows if row.get("patient_id"))
+        if len(rows) < PAGE_SIZE:
+            break
+        offset += PAGE_SIZE
+    return ids
+
+
 def run_ingestion(client) -> dict[str, int]:
     from app.services.funnel import vector_store
 
     names = fetch_patient_names(client)
     documents = fetch_ehr_documents(client)
+    incremental = os.getenv("INGEST_RESET", "").lower() not in ("1", "true", "yes")
+    if incremental:
+        ingested = fetch_ingested_patient_ids(client)
+        if ingested:
+            before = len(documents)
+            documents = [doc for doc in documents if doc.patient_id not in ingested]
+            skipped = before - len(documents)
+            if skipped:
+                logger.info("Skipping %s documents for %s already-ingested patients", skipped, len(ingested))
     chunks = build_chunks(documents, names)
     if not chunks:
         logger.warning("No EHR text found to ingest")
