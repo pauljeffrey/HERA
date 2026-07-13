@@ -46,7 +46,7 @@ export default function PatientLookupSidebar() {
   }
 
   return (
-    <aside className="shrink-0 border-b border-slate-200/70 bg-white/90 dark:border-slate-800 dark:bg-slate-950/90 lg:max-h-[calc(100vh-180px)] lg:w-80 lg:overflow-y-auto lg:border-b-0 lg:border-r">
+    <aside className="shrink-0 border-b border-slate-200/70 bg-white/90 dark:border-slate-800 dark:bg-slate-950/90 lg:max-h-[calc(100vh-180px)] lg:w-96 lg:overflow-y-auto lg:border-b-0 lg:border-r">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
