@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import re
 from datetime import datetime
 from typing import Any
@@ -410,6 +411,66 @@ def search_patient_notes(patient_id: str, query: str, *, limit: int = 8) -> dict
     return {"patient_id": patient_id, "query": query, "matches": matches}
 
 
+# Mirrors app/db/schema.sql minus search-infra columns (fts_doc, embedding)
+# so the agent writes SQL against real column names instead of guessing.
+DATABASE_SCHEMA: dict[str, list[str]] = {
+    "patients": [
+        "patient_id", "name", "age", "sex", "inclusion_exclusion_criteria",
+        "specialty_key", "specialty_label", "scenario_brief",
+    ],
+    "encounters": [
+        "id", "patient_id", "encounter_id", "encounter_index", "encounter_type",
+        "days_since_baseline", "occurred_at", "bp", "pulse", "resp_rate",
+        "temperature", "spo2",
+    ],
+    "encounter_medications": ["id", "encounter_id", "medication"],
+    "encounter_investigations": ["id", "encounter_id", "investigation"],
+    "encounter_diagnoses": ["id", "encounter_id", "diagnosis"],
+    "encounter_tags": ["id", "encounter_id", "tag"],
+    "lab_panels": ["id", "encounter_id", "panel_name"],
+    "lab_results": ["id", "lab_panel_id", "test_name", "test_value"],
+    "clinical_progress_notes": [
+        "id", "encounter_id", "patient_id", "encounter_index", "encounter_type",
+        "specialty_key", "specialty_label", "scenario_brief", "soap_note",
+    ],
+    "audit_logs": [
+        "log_id", "patient_id", "encounter_id", "trial_id",
+        "clinician_override_status", "override_reason_text", "timestamp",
+    ],
+    "trial_matching_tasks": [
+        "task_id", "user_id", "trial_id", "status", "progress_percentage",
+        "result_summary", "created_at",
+    ],
+}
+
+# Child tables reference encounters via its UUID surrogate `encounters.id`,
+# NOT the human-readable TEXT `encounters.encounter_id` — joining on the wrong
+# one raises `operator does not exist: text = uuid`.
+SCHEMA_JOIN_HINTS: list[str] = [
+    "patients.patient_id = encounters.patient_id",
+    "encounters.id = encounter_medications.encounter_id (UUID join)",
+    "encounters.id = encounter_investigations.encounter_id (UUID join)",
+    "encounters.id = encounter_diagnoses.encounter_id (UUID join)",
+    "encounters.id = encounter_tags.encounter_id (UUID join)",
+    "encounters.id = lab_panels.encounter_id (UUID join)",
+    "lab_panels.id = lab_results.lab_panel_id (UUID join)",
+    "encounters.id = clinical_progress_notes.encounter_id (UUID join)",
+    "patients.patient_id = clinical_progress_notes.patient_id",
+]
+
+
+def describe_database_schema() -> dict[str, Any]:
+    return {
+        "tables": DATABASE_SCHEMA,
+        "join_hints": SCHEMA_JOIN_HINTS,
+        "notes": [
+            "Patient full names live in patients.name (single column; no first_name/last_name).",
+            "lab_results.test_value is TEXT — cast before numeric comparisons.",
+            "Free-text clinical narrative lives in clinical_progress_notes.soap_note.",
+        ],
+    }
+
+
 def query_clinical_database_metadata() -> dict[str, Any]:
     settings = get_settings()
     tables = [
@@ -522,3 +583,114 @@ def compute_cohort_statistic(
     if aggregation == "mean" and values:
         return {"metric": metric, "aggregation": aggregation, "value": sum(values) / len(values)}
     return {"metric": metric, "aggregation": aggregation, "value": 0, "patients_matched": 0}
+
+
+def fetch_patient_biodata(patient_id: str) -> dict[str, Any] | None:
+    """Return name, age, sex, and encounter count for one patient."""
+    settings = get_settings()
+    if settings.database_mode == "supabase":
+        client = get_supabase_client()
+        patient_result = (
+            client.table("patients")
+            .select("patient_id, name, age, sex, specialty_label")
+            .eq("patient_id", patient_id)
+            .limit(1)
+            .execute()
+        )
+        if not patient_result.data:
+            return None
+        row = patient_result.data[0]
+        enc_result = (
+            client.table("encounters")
+            .select("id", count="exact")
+            .eq("patient_id", patient_id)
+            .execute()
+        )
+        row["encounter_count"] = int(enc_result.count or 0)
+        return row
+
+    sql = """
+        SELECT p.patient_id, p.name, p.age, p.sex, p.specialty_label,
+               COUNT(e.id)::int AS encounter_count
+        FROM patients p
+        LEFT JOIN encounters e ON e.patient_id = p.patient_id
+        WHERE p.patient_id = %s
+        GROUP BY p.patient_id, p.name, p.age, p.sex, p.specialty_label
+        LIMIT 1
+    """
+    try:
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (patient_id,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            cols = [desc[0] for desc in cur.description]
+            return dict(zip(cols, row))
+    except Exception as exc:
+        logger.warning("fetch_patient_biodata failed for %s: %s", patient_id, exc)
+        return None
+
+
+def fetch_random_patient() -> dict[str, Any] | None:
+    """Pick one patient with biodata and encounter count for the command-center roulette."""
+    settings = get_settings()
+    if settings.database_mode == "supabase":
+        client = get_supabase_client()
+        ids_result = client.table("patients").select("patient_id").execute()
+        rows = ids_result.data or []
+        if not rows:
+            return None
+        patient_id = random.choice(rows)["patient_id"]
+        patient_result = (
+            client.table("patients")
+            .select("patient_id, name, age, sex, specialty_label")
+            .eq("patient_id", patient_id)
+            .limit(1)
+            .execute()
+        )
+        if not patient_result.data:
+            return None
+        row = patient_result.data[0]
+        enc_result = (
+            client.table("encounters")
+            .select("id", count="exact")
+            .eq("patient_id", patient_id)
+            .execute()
+        )
+        row["encounter_count"] = int(enc_result.count or 0)
+        return row
+
+    sql = """
+        SELECT p.patient_id, p.name, p.age, p.sex, p.specialty_label,
+               COUNT(e.id)::int AS encounter_count
+        FROM patients p
+        LEFT JOIN encounters e ON e.patient_id = p.patient_id
+        GROUP BY p.patient_id, p.name, p.age, p.sex, p.specialty_label
+        ORDER BY RANDOM()
+        LIMIT 1
+    """
+    try:
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(sql)
+            row = cur.fetchone()
+            if not row:
+                return None
+            cols = [desc[0] for desc in cur.description]
+            return dict(zip(cols, row))
+    except Exception as exc:
+        logger.warning("fetch_random_patient failed: %s", exc)
+        return None
+
+
+def count_patients() -> int:
+    settings = get_settings()
+    if settings.database_mode == "supabase":
+        result = get_supabase_client().table("patients").select("patient_id", count="exact").execute()
+        return int(result.count or 0)
+    try:
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM patients")
+            (count,) = cur.fetchone()
+            return int(count)
+    except Exception:
+        return len(SOAP_NOTES)

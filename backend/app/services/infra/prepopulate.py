@@ -98,10 +98,12 @@ def _parse_mode(value: str) -> str | None:
     mode = value.strip().lower()
     if mode in ("", "false", "0", "no", "off"):
         return None
-    if mode in ("reset", "true", "yes", "1", "always", "sync"):
+    if mode in ("reset", "true", "yes", "1", "always"):
         return "reset"
     if mode in ("if_empty", "if-empty"):
         return "if_empty"
+    if mode in ("sync", "incremental"):
+        return "sync"
     raise ValueError(f"Unsupported PREPOPULATE_DB value: {value}")
 
 
@@ -258,6 +260,64 @@ def _load_clinical_dataset(settings: Settings) -> ClinicalDataset:
     )
 
 
+def _filter_dataset_by_patient_ids(dataset: ClinicalDataset, patient_ids: set[str]) -> ClinicalDataset:
+    if not patient_ids:
+        return ClinicalDataset()
+    patients = [row for row in dataset.patients if row["patient_id"] in patient_ids]
+    encounters = [row for row in dataset.encounters if row["patient_id"] in patient_ids]
+    encounter_ids = {row["id"] for row in encounters}
+    lab_panels = [row for row in dataset.lab_panels if row["encounter_id"] in encounter_ids]
+    lab_panel_ids = {row["id"] for row in lab_panels}
+    filtered = ClinicalDataset(
+        patients=patients,
+        encounters=encounters,
+        medications=[row for row in dataset.medications if row["encounter_id"] in encounter_ids],
+        investigations=[row for row in dataset.investigations if row["encounter_id"] in encounter_ids],
+        diagnoses=[row for row in dataset.diagnoses if row["encounter_id"] in encounter_ids],
+        tags=[row for row in dataset.tags if row["encounter_id"] in encounter_ids],
+        lab_panels=lab_panels,
+        lab_results=[row for row in dataset.lab_results if row["lab_panel_id"] in lab_panel_ids],
+        progress_notes=[row for row in dataset.progress_notes if row["patient_id"] in patient_ids],
+    )
+    filtered.expected = ExpectedCounts(
+        patients=len(filtered.patients),
+        encounters=len(filtered.encounters),
+        medications=len(filtered.medications),
+        investigations=len(filtered.investigations),
+        diagnoses=len(filtered.diagnoses),
+        tags=len(filtered.tags),
+        lab_panels=len(filtered.lab_panels),
+        lab_results=len(filtered.lab_results),
+        progress_notes=len(filtered.progress_notes),
+    )
+    return filtered
+
+
+def _fetch_supabase_patient_ids(client: Client) -> set[str]:
+    ids: set[str] = set()
+    offset = 0
+    page_size = 1000
+    while True:
+        result = (
+            client.table("patients")
+            .select("patient_id")
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        rows = result.data or []
+        if not rows:
+            break
+        ids.update(row["patient_id"] for row in rows if row.get("patient_id"))
+        if len(rows) < page_size:
+            break
+        offset += page_size
+    return ids
+
+
+def _new_patient_ids(full_dataset: ClinicalDataset, existing_ids: set[str]) -> set[str]:
+    return {row["patient_id"] for row in full_dataset.patients if row["patient_id"] not in existing_ids}
+
+
 def _should_skip(mode: str, patient_count: int, note_count: int, expected: ExpectedCounts) -> bool:
     if mode != "if_empty":
         return False
@@ -357,10 +417,17 @@ def _prepopulate_supabase(settings: Settings, mode: str) -> None:
 
     patient_count = _supabase_count(client, "patients")
     note_count = _supabase_count(client, "clinical_progress_notes")
-    if _should_skip(mode, patient_count, note_count, dataset.expected):
+    if mode == "sync":
+        existing_ids = _fetch_supabase_patient_ids(client)
+        new_ids = _new_patient_ids(dataset, existing_ids)
+        if not new_ids:
+            logger.info("Prepopulate sync: no new patients to load (%s already in DB)", len(existing_ids))
+            return
+        dataset = _filter_dataset_by_patient_ids(dataset, new_ids)
+        logger.info("Prepopulate sync: upserting %s new patients", len(new_ids))
+    elif _should_skip(mode, patient_count, note_count, dataset.expected):
         return
-
-    if mode == "reset" or note_count == 0:
+    elif mode == "reset" or note_count == 0:
         for table in CLINICAL_TABLES:
             logger.info("Clearing %s...", table)
             _supabase_clear(client, table)
@@ -381,9 +448,12 @@ def _prepopulate_supabase(settings: Settings, mode: str) -> None:
     )
 
 
-def _postgres_sync(cur, dataset: ClinicalDataset) -> None:
+def _postgres_sync(cur, dataset: ClinicalDataset, *, incremental: bool = False) -> None:
     from app.db.connection import execute_batch
 
+    encounter_ids = [row["id"] for row in dataset.encounters]
+    patient_ids = [row["patient_id"] for row in dataset.patients]
+    lab_panel_ids = [row["id"] for row in dataset.lab_panels]
     execute_batch(
         cur,
         """
@@ -435,7 +505,10 @@ def _postgres_sync(cur, dataset: ClinicalDataset) -> None:
         ("encounter_tags", ["encounter_id", "tag", "sort_order"], dataset.tags),
     )
     for table, columns, rows in child_tables:
-        cur.execute(f"DELETE FROM {table}")
+        if incremental and encounter_ids:
+            cur.execute(f"DELETE FROM {table} WHERE encounter_id = ANY(%s::uuid[])", (encounter_ids,))
+        elif not incremental:
+            cur.execute(f"DELETE FROM {table}")
         if not rows:
             continue
         col_sql = ", ".join(columns)
@@ -444,8 +517,13 @@ def _postgres_sync(cur, dataset: ClinicalDataset) -> None:
         )
         execute_batch(cur, f"INSERT INTO {table} ({col_sql}) VALUES ({placeholders})", rows, page_size=500)
 
-    cur.execute("DELETE FROM lab_results")
-    cur.execute("DELETE FROM lab_panels")
+    if incremental and encounter_ids:
+        if lab_panel_ids:
+            cur.execute("DELETE FROM lab_results WHERE lab_panel_id = ANY(%s::uuid[])", (lab_panel_ids,))
+        cur.execute("DELETE FROM lab_panels WHERE encounter_id = ANY(%s::uuid[])", (encounter_ids,))
+    else:
+        cur.execute("DELETE FROM lab_results")
+        cur.execute("DELETE FROM lab_panels")
     execute_batch(
         cur,
         """
@@ -464,7 +542,10 @@ def _postgres_sync(cur, dataset: ClinicalDataset) -> None:
         dataset.lab_results,
         page_size=500,
     )
-    cur.execute("DELETE FROM clinical_progress_notes")
+    if incremental and patient_ids:
+        cur.execute("DELETE FROM clinical_progress_notes WHERE patient_id = ANY(%s)", (patient_ids,))
+    else:
+        cur.execute("DELETE FROM clinical_progress_notes")
     execute_batch(
         cur,
         """
@@ -503,14 +584,25 @@ def _prepopulate_postgres(settings: Settings, mode: str) -> None:
                 logger.error("Schema missing. Apply %s first.", SCHEMA_SQL)
                 raise
 
-            if _should_skip(mode, patient_count, note_count, dataset.expected):
+            if mode == "sync":
+                cur.execute("SELECT patient_id FROM patients")
+                existing_ids = {row[0] for row in cur.fetchall()}
+                new_ids = _new_patient_ids(dataset, existing_ids)
+                if not new_ids:
+                    logger.info("Prepopulate sync: no new patients to load")
+                    return
+                dataset = _filter_dataset_by_patient_ids(dataset, new_ids)
+                logger.info("Prepopulate sync: upserting %s new patients", len(new_ids))
+            elif _should_skip(mode, patient_count, note_count, dataset.expected):
                 return
-
-            if mode == "reset" or note_count == 0 or patient_count == 0:
+            elif mode == "reset" or note_count == 0 or patient_count == 0:
                 for table in CLINICAL_TABLES:
                     cur.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE")
 
-            _postgres_sync(cur, dataset)
+            if mode == "sync":
+                _postgres_sync(cur, dataset, incremental=True)
+            else:
+                _postgres_sync(cur, dataset)
         conn.commit()
         logger.info(
             "Prepopulate complete — %s patients, %s encounters, %s SOAP notes",
