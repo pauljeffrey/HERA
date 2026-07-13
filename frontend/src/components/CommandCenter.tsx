@@ -30,7 +30,7 @@ type ChatMessage = StoredChatMessage & {
 };
 
 const WELCOME =
-  "I'm your HERA assistant. Ask clinical questions, explore trial criteria, or paste inclusion and exclusion rules. I'll help you think through them.";
+  "I'm your HERA assistant. Ask clinical questions about any patient in the Electronic Health Record (EHR). Explore trial criteria, or paste inclusion and exclusion rules to match patients for clinical trials. I'll help you think through them.";
 
 export default function CommandCenter() {
   const searchParams = useSearchParams();
@@ -223,14 +223,36 @@ export default function CommandCenter() {
           ) : null}
 
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div className="shrink-0 border-b border-slate-200/70 bg-white/80 px-4 py-2 dark:border-slate-800 dark:bg-slate-950/80 sm:px-6">
-              <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-700 text-xs font-semibold text-white">
+            <div
+              className={`shrink-0 border-b border-slate-200/70 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 sm:px-6 ${
+                messages.length === 0 ? "px-4 py-8" : "px-4 py-2"
+              }`}
+            >
+              <div className={`flex gap-3 ${messages.length === 0 ? "items-start gap-4" : "items-center"}`}>
+                <div
+                  className={`flex shrink-0 items-center justify-center rounded-lg bg-emerald-700 font-semibold text-white ${
+                    messages.length === 0 ? "h-12 w-12 text-lg" : "h-8 w-8 text-xs"
+                  }`}
+                >
                   H
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Clinical command center</p>
-                  <p className="truncate text-xs text-slate-500">{WELCOME}</p>
+                  <p
+                    className={`font-semibold text-slate-900 dark:text-slate-100 ${
+                      messages.length === 0 ? "text-xl sm:text-2xl" : "text-sm"
+                    }`}
+                  >
+                    Clinical command center
+                  </p>
+                  <p
+                    className={
+                      messages.length === 0
+                        ? "mt-2 max-w-3xl text-sm leading-relaxed text-slate-600 dark:text-slate-300 sm:text-base"
+                        : "line-clamp-2 text-xs text-slate-500"
+                    }
+                  >
+                    {WELCOME}
+                  </p>
                 </div>
               </div>
             </div>

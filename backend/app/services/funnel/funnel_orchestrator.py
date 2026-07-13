@@ -113,9 +113,18 @@ def _tier3_cap(payload: SearchCriteria, settings) -> int:
 async def run_fts_vector_filter(payload: SearchCriteria) -> tuple[list[PatientTimeline], FunnelMetrics]:
     """Run FTS and vector retrieval concurrently, merge, rank, then cap for Tier 3."""
     settings = get_settings()
+    logger.info(
+        "Funnel start: fts_top_k=%s semantic_top_k=%s keywords=%s semantic_variants=%s constraints=%s",
+        settings.fts_top_k,
+        settings.semantic_top_k,
+        len(payload.lexical_keywords or []),
+        len(payload.semantic_query_variants or []),
+        len(payload.numerical_constraints or []),
+    )
     fts_task = asyncio.to_thread(full_text_search, payload)
     vs_task = asyncio.to_thread(vector_search, payload)
     fts_chunks, vs_chunks = await asyncio.gather(fts_task, vs_task)
+    logger.info("Funnel retrieval done: fts_chunks=%s vs_chunks=%s", len(fts_chunks), len(vs_chunks))
 
     fts_patient_ids = {chunk.patient_id for chunk in fts_chunks}
     merged: dict[str, NoteChunk] = {}

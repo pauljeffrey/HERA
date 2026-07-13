@@ -42,7 +42,10 @@ async def create_matching_task(
 
 
 async def update_matching_task(task_id: str, **fields: Any) -> None:
-    await set_task_state(task_id, **fields)
+    # Always stamp task_id into Redis: after Redis restarts (dokploy redis uses
+    # --save ""), a partial update would recreate the hash without task_id and
+    # GET /tasks/{id} would KeyError on the incomplete cache.
+    await set_task_state(task_id, task_id=task_id, **fields)
 
     settings = get_settings()
     if settings.database_mode == "supabase":
@@ -68,7 +71,9 @@ async def fetch_matching_task(task_id: str) -> dict | None:
         return None
 
     cached = await get_task_state(task_id)
-    if cached:
+    # Incomplete hashes (missing task_id / status) are treated as a miss so we
+    # rehydrate from Postgres instead of crashing the status endpoint.
+    if cached and cached.get("task_id") and cached.get("status") is not None:
         return cached
 
     settings = get_settings()

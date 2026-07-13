@@ -27,6 +27,11 @@ async def run_matching_pipeline(
     logger.info("Task %s: starting matching pipeline for trial_id=%s user_id=%s", task_id, trial_id, user_id)
     try:
         await update_matching_task(task_id, status="processing", progress_percentage=20)
+        logger.info(
+            "Task %s: starting FTS+VS funnel (this is where progress can sit at 20%% for a long time "
+            "if FTS_TOP_K/SEMANTIC_TOP_K are large or DB/Pinecone is slow)",
+            task_id,
+        )
 
         timelines, metrics = await run_fts_vector_filter(search_payload)
         logger.info(
