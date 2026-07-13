@@ -84,3 +84,17 @@ class PatientSnapshotResponse(BaseModel):
     encounters: list[PatientEncounterNote]
     extracted_features: list[ExtractedFeature]
     audit_payload: PatientAuditPayload
+
+
+class PatientBiodata(BaseModel):
+    patient_id: str
+    name: str
+    age: int
+    sex: str
+    specialty_label: str | None = None
+    encounter_count: int = 0
+
+
+class RandomPatientResponse(BaseModel):
+    total_patients: int = 0
+    patient: PatientBiodata | None = None

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.models.patients import ExtractedFeature, PatientEncounterNote
+from app.models.patients import ExtractedFeature, PatientBiodata, PatientEncounterNote
 
 
 class CriterionAuditItem(BaseModel):
@@ -25,6 +25,7 @@ class AuditDashboardPatient(BaseModel):
     encounters: list[PatientEncounterNote] = Field(default_factory=list)
     extracted_features: list[ExtractedFeature] = Field(default_factory=list)
     override_status: str | None = None
+    biodata: PatientBiodata | None = None
 
 
 class AuditDashboardResponse(BaseModel):
