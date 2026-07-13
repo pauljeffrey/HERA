@@ -1,4 +1,5 @@
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8010/api/v1";
+export const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, "");
 
 export type CriteriaPrompt = { text: string; patient_count: number };
 
@@ -62,6 +63,7 @@ export type AuditPatient = {
   encounters: EncounterNote[];
   extracted_features: ExtractedFeature[];
   override_status?: string | null;
+  biodata?: PatientBiodata | null;
 };
 
 export type AuditDashboard = {
@@ -94,6 +96,20 @@ export type TrackedTask = {
   cohort_size?: number;
   top_diagnoses?: string[];
   patient_ids_preview?: string[];
+};
+
+export type RandomPatientResponse = {
+  total_patients: number;
+  patient: PatientBiodata | null;
+};
+
+export type PatientBiodata = {
+  patient_id: string;
+  name: string;
+  age: number;
+  sex: string;
+  specialty_label?: string | null;
+  encounter_count: number;
 };
 
 export type RandomCriterionResponse = {
@@ -149,9 +165,17 @@ export type AuditLogEntry = {
 
 export const CRITERIA_SEED_KEY = "hera_criteria_seed";
 
+import { normalizeTaskId } from "./task_id";
+
 async function parseError(res: Response, fallback: string) {
   const text = await res.text();
-  throw new Error(text || `${fallback} (${res.status})`);
+  try {
+    const body = JSON.parse(text) as { detail?: string };
+    if (typeof body.detail === "string") throw new Error(body.detail);
+  } catch (err) {
+    if (err instanceof Error && err.message !== text) throw err;
+  }
+  throw new Error(text.length < 200 ? text : `${fallback} (${res.status})`);
 }
 
 export async function fetchCriteriaPrompts(limit = 20): Promise<CriteriaPromptsResponse> {
@@ -160,24 +184,179 @@ export async function fetchCriteriaPrompts(limit = 20): Promise<CriteriaPromptsR
   return res.json();
 }
 
-export async function sendChatMessage(message: string, conversationId?: string | null) {
+export async function sendChatMessage(
+  message: string,
+  conversationId?: string | null,
+  patientId?: string | null,
+) {
   const res = await fetch(`${API_BASE}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, conversation_id: conversationId ?? undefined }),
+    body: JSON.stringify({
+      message,
+      conversation_id: conversationId ?? undefined,
+      patient_id: patientId ?? undefined,
+    }),
   });
   if (!res.ok) await parseError(res, "Chat request failed");
   return res.json() as Promise<ChatResponse>;
 }
 
+export type StreamEventHandlers = {
+  onStatus?: (text: string) => void;
+  onDelta?: (text: string) => void;
+  onDone?: (payload: ChatResponse) => void;
+  onError?: (message: string) => void;
+};
+
+async function consumeSseStream(
+  res: Response,
+  handlers: StreamEventHandlers,
+): Promise<ChatResponse | null> {
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error("Streaming is not supported in this browser.");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let donePayload: ChatResponse | null = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+
+    for (const part of parts) {
+      const line = part
+        .split("\n")
+        .find((row) => row.startsWith("data: "));
+      if (!line) continue;
+      const payload = JSON.parse(line.slice(6)) as {
+        type?: string;
+        content?: string;
+        reply?: string;
+        conversation_id?: string;
+        suggested_patient_id?: string | null;
+        search_payload?: unknown;
+      };
+
+      if (payload.type === "status" && payload.content) {
+        handlers.onStatus?.(payload.content);
+      } else if (payload.type === "delta" && payload.content) {
+        handlers.onDelta?.(payload.content);
+      } else if (payload.type === "error" && payload.content) {
+        handlers.onError?.(payload.content);
+        throw new Error(payload.content);
+      } else if (payload.type === "done" && payload.reply && payload.conversation_id) {
+        donePayload = {
+          reply: payload.reply,
+          conversation_id: payload.conversation_id,
+          suggested_patient_id: payload.suggested_patient_id,
+          search_payload: payload.search_payload,
+        };
+        handlers.onDone?.(donePayload);
+      }
+    }
+  }
+
+  return donePayload;
+}
+
+export async function streamChatMessage(
+  message: string,
+  handlers: StreamEventHandlers,
+  conversationId?: string | null,
+  patientId?: string | null,
+) {
+  const res = await fetch(`${API_BASE}/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message,
+      conversation_id: conversationId ?? undefined,
+      patient_id: patientId ?? undefined,
+    }),
+  });
+  if (!res.ok) await parseError(res, "Chat request failed");
+  return consumeSseStream(res, handlers);
+}
+
+export type CopilotStreamHandlers = {
+  onStatus?: (text: string) => void;
+  onDelta?: (text: string) => void;
+  onDone?: (payload: CopilotResponse) => void;
+  onError?: (message: string) => void;
+};
+
+export async function streamAuditCopilot(
+  taskId: string,
+  message: string,
+  handlers: CopilotStreamHandlers,
+  patientId?: string | null,
+  userId = "clinician-1",
+) {
+  const res = await fetch(`${API_BASE}/audit/tasks/${taskId}/copilot/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, patient_id: patientId, user_id: userId }),
+  });
+  if (!res.ok) await parseError(res, "Copilot request failed");
+
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error("Streaming is not supported in this browser.");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let donePayload: CopilotResponse | null = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+
+    for (const part of parts) {
+      const line = part.split("\n").find((row) => row.startsWith("data: "));
+      if (!line) continue;
+      const payload = JSON.parse(line.slice(6)) as Record<string, unknown>;
+      const type = payload.type as string | undefined;
+
+      if (type === "status" && typeof payload.content === "string") {
+        handlers.onStatus?.(payload.content);
+      } else if (type === "delta" && typeof payload.content === "string") {
+        handlers.onDelta?.(payload.content);
+      } else if (type === "error" && typeof payload.content === "string") {
+        handlers.onError?.(payload.content);
+        throw new Error(payload.content);
+      } else if (type === "done" && typeof payload.reply === "string") {
+        donePayload = {
+          reply: payload.reply,
+          scope: (payload.scope as string) ?? "@Entire_Cohort",
+          suggested_chips: (payload.suggested_chips as string[]) ?? [],
+          override_applied: Boolean(payload.override_applied),
+          updated_patient_id: (payload.updated_patient_id as string | null) ?? null,
+          updated_overall_status: (payload.updated_overall_status as string | null) ?? null,
+        };
+        handlers.onDone?.(donePayload);
+      }
+    }
+  }
+
+  return donePayload;
+}
+
 export async function fetchTaskStatus(taskId: string) {
-  const res = await fetch(`${API_BASE}/tasks/${taskId}`, { cache: "no-store" });
+  const id = normalizeTaskId(taskId);
+  const res = await fetch(`${API_BASE}/tasks/${id}`, { cache: "no-store" });
   if (!res.ok) await parseError(res, "Task poll failed");
   return res.json() as Promise<TaskStatus>;
 }
 
 export async function fetchAuditDashboard(taskId: string) {
-  const res = await fetch(`${API_BASE}/audit/tasks/${taskId}`, { cache: "no-store" });
+  const id = normalizeTaskId(taskId);
+  const res = await fetch(`${API_BASE}/audit/tasks/${id}`, { cache: "no-store" });
   if (!res.ok) await parseError(res, "Audit dashboard load failed");
   return res.json() as Promise<AuditDashboard>;
 }
@@ -222,11 +401,24 @@ export async function fetchPatients() {
   return res.json() as Promise<string[]>;
 }
 
+export async function fetchPatientBiodata(patientId: string) {
+  const id = patientId.trim().toUpperCase();
+  const res = await fetch(`${API_BASE}/patients/${id}/biodata`, { cache: "no-store" });
+  if (!res.ok) await parseError(res, "Failed to load patient biodata");
+  return res.json() as Promise<PatientBiodata>;
+}
+
 export async function fetchPatient(patientId: string, trialId?: string) {
   const query = trialId ? `?trial_id=${encodeURIComponent(trialId)}` : "";
   const res = await fetch(`${API_BASE}/patients/${patientId}${query}`, { cache: "no-store" });
   if (!res.ok) await parseError(res, "Failed to load patient");
   return res.json() as Promise<PatientSnapshot>;
+}
+
+export async function fetchRandomPatient() {
+  const res = await fetch(`${API_BASE}/patients/random`, { cache: "no-store" });
+  if (!res.ok) await parseError(res, "Random patient failed");
+  return res.json() as Promise<RandomPatientResponse>;
 }
 
 export async function fetchRandomCriterion() {

@@ -1,5 +1,6 @@
 "use client";
 
+import MetricsPane from "@/components/audit/MetricsPane";
 import { useAuditContext } from "@/context/AuditContext";
 import type { AuditPatient } from "@/lib/api";
 
@@ -24,6 +25,13 @@ export default function LedgerPane({ patient }: { patient: AuditPatient | null }
         Final verdict: {patient.overall_status.replaceAll("_", " ")}
       </div>
       <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">{patient.chain_of_thought_summary}</p>
+
+      {patient.extracted_features.length ? (
+        <div>
+          <h3 className="panel-label mb-2">Extracted metrics</h3>
+          <MetricsPane patient={patient} />
+        </div>
+      ) : null}
 
       {patient.criteria_ledger.map((criterion) => (
         <button

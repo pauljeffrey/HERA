@@ -20,6 +20,10 @@ export default function MetricsPane({ patient }: { patient: AuditPatient | null 
     return <p className="text-sm text-slate-500">Extracted metrics will appear here.</p>;
   }
 
+  if (!patient.extracted_features.length) {
+    return <p className="text-sm text-slate-500">No structured metrics were extracted for this patient.</p>;
+  }
+
   return (
     <div className="space-y-3">
       {patient.extracted_features.map((feature, index) => (
@@ -27,6 +31,7 @@ export default function MetricsPane({ patient }: { patient: AuditPatient | null 
           key={`${feature.field_name}-${index}`}
           type="button"
           onMouseEnter={() => focusFeature(patient, feature)}
+          onClick={() => focusFeature(patient, feature)}
           className="panel-row w-full text-left transition hover:border-emerald-400"
         >
           <div className="mb-2 flex items-center justify-between gap-2">

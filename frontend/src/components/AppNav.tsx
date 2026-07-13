@@ -2,14 +2,27 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 const links = [
   { href: "/", label: "Command Center" },
   { href: "/patients", label: "Patients" },
+  { href: "/about", label: "About" },
+  { href: "/how-to-use", label: "How to Use" },
 ];
+
+function isActive(pathname: string, href: string) {
+  return href === "/" ? pathname === "/" : pathname.startsWith(href);
+}
 
 export default function AppNav() {
   const pathname = usePathname();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   if (pathname.startsWith("/embed")) return null;
 
   return (
@@ -19,7 +32,7 @@ export default function AppNav() {
           HERA
         </Link>
         {links.map((link) => {
-          const active = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
+          const active = mounted && isActive(pathname, link.href);
           return (
             <Link
               key={link.href}

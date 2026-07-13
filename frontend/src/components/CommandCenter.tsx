@@ -2,22 +2,32 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import ReactMarkdown from "react-markdown";
 
 import CriteriaRoulette from "@/components/explore/CriteriaRoulette";
+import PatientRoulette from "@/components/explore/PatientRoulette";
+import ChatMarkdown from "@/components/ChatMarkdown";
+import TaskProgressBar from "@/components/TaskProgressBar";
 import TaskSidebar from "@/components/TaskSidebar";
+import {
+  COMMAND_CENTER_CHAT_KEY,
+  loadStoredChat,
+  saveStoredChat,
+  type StoredChatMessage,
+} from "@/lib/chatStorage";
 import {
   CRITERIA_SEED_KEY,
   fetchCriteriaPrompts,
   loadTrackedTasks,
-  sendChatMessage,
+  streamChatMessage,
+  upsertTrackedTask,
+  type PatientBiodata,
   type TrackedTask,
 } from "@/lib/api";
+import { extractTaskId, extractTrialId } from "@/lib/task_id";
 
-type ChatMessage = {
-  role: "user" | "assistant";
-  content: string;
-  taskId?: string;
+type ChatMessage = StoredChatMessage & {
+  streaming?: boolean;
+  statusText?: string;
 };
 
 const WELCOME =
@@ -33,10 +43,27 @@ export default function CommandCenter() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [prompts, setPrompts] = useState<{ text: string; patient_count: number }[]>([]);
+  const [activePatient, setActivePatient] = useState<PatientBiodata | null>(null);
+  const [hydrated, setHydrated] = useState(false);
 
   const handleTasksChange = useCallback((updated: TrackedTask[]) => {
     setTasks(updated);
   }, []);
+
+  useEffect(() => {
+    const stored = loadStoredChat(COMMAND_CENTER_CHAT_KEY);
+    setMessages(stored.messages);
+    setConversationId(stored.conversationId);
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    saveStoredChat(COMMAND_CENTER_CHAT_KEY, {
+      conversationId,
+      messages: messages.map(({ role, content, taskId }) => ({ role, content, taskId })),
+    });
+  }, [conversationId, messages, hydrated]);
 
   useEffect(() => {
     setTasks(loadTrackedTasks());
@@ -64,17 +91,78 @@ export default function CommandCenter() {
 
     setLoading(true);
     setError(null);
-    const nextMessages: ChatMessage[] = [...messages, { role: "user", content: text }];
-    setMessages(nextMessages);
+    const assistantIndex = messages.length + 1;
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: text },
+      { role: "assistant", content: "", streaming: true, statusText: "Thinking…" },
+    ]);
     setInput("");
 
     try {
-      const response = await sendChatMessage(text, conversationId);
+      const response = await streamChatMessage(
+        text,
+        {
+          onStatus: (status) => {
+            setMessages((prev) => {
+              const next = [...prev];
+              const row = next[assistantIndex];
+              if (row?.role === "assistant") {
+                next[assistantIndex] = { ...row, statusText: status };
+              }
+              return next;
+            });
+          },
+          onDelta: (delta) => {
+            setMessages((prev) => {
+              const next = [...prev];
+              const row = next[assistantIndex];
+              if (row?.role === "assistant") {
+                next[assistantIndex] = {
+                  ...row,
+                  content: row.content + delta,
+                  statusText: undefined,
+                };
+              }
+              return next;
+            });
+          },
+        },
+        conversationId,
+        activePatient?.patient_id,
+      );
+
+      if (!response) {
+        throw new Error("Chat ended without a response.");
+      }
+
       setConversationId(response.conversation_id);
-      setMessages((prev) => [...prev, { role: "assistant", content: response.reply }]);
+      const taskId = extractTaskId(response.reply);
+      const trialId = extractTrialId(response.reply) ?? "UNKNOWN";
+      if (taskId) {
+        const tracked: TrackedTask = {
+          task_id: taskId,
+          trial_id: trialId,
+          status: "processing",
+          progress_percentage: 10,
+          response: response.reply.slice(0, 240),
+        };
+        upsertTrackedTask(tracked);
+        setTasks(loadTrackedTasks());
+      }
+
+      setMessages((prev) => {
+        const next = [...prev];
+        next[assistantIndex] = {
+          role: "assistant",
+          content: response.reply,
+          taskId,
+        };
+        return next;
+      });
     } catch (err) {
       setError(friendlyError(err));
-      setMessages((prev) => prev.slice(0, -1));
+      setMessages((prev) => prev.slice(0, -2));
       setInput(text);
     } finally {
       setLoading(false);
@@ -90,33 +178,66 @@ export default function CommandCenter() {
     setInput((prev) => (prev ? `${prev.trim()}\n\n${text}` : text));
   }
 
+  function bindPatient(patient: PatientBiodata) {
+    setActivePatient(patient);
+    insertPrompt(
+      `I'd like to discuss patient ${patient.patient_id} (${patient.name}, ${patient.age}y ${patient.sex}, ${patient.encounter_count} encounters).`,
+    );
+  }
+
   const busy = loading;
   const rouletteOpen = searchParams.get("roulette") === "1";
 
   return (
-    <div className="flex min-h-[calc(100vh-49px)] flex-col bg-slate-100 dark:bg-slate-950">
-      <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col lg:flex-row">
-        <aside className="w-full shrink-0 border-b border-slate-200/70 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 lg:w-80 lg:border-b-0 lg:border-r">
+    <div className="flex h-[calc(100vh-49px)] overflow-hidden bg-slate-100 dark:bg-slate-950">
+      <div className="mx-auto flex h-full w-full max-w-7xl flex-col lg:flex-row">
+        <aside className="max-h-44 w-full shrink-0 overflow-y-auto border-b border-slate-200/70 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 lg:h-full lg:max-h-none lg:w-80 lg:border-b-0 lg:border-r">
           <TaskSidebar tasks={tasks} onTasksChange={handleTasksChange} />
         </aside>
 
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <CriteriaRoulette
             embedded
             defaultOpen={rouletteOpen}
             onUseCriterion={(text) => insertPrompt(`Help me screen patients with these criteria:\n${text}`)}
           />
 
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
-              {messages.length === 0 ? (
-                <div className="mx-auto max-w-2xl pt-8 text-center">
-                  <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-700 text-xl font-semibold text-white">
-                    H
-                  </div>
-                  <h1 className="page-title">Clinical command center</h1>
-                  <p className="mt-3 text-sm leading-7 text-slate-600 dark:text-slate-400">{WELCOME}</p>
+          <PatientRoulette embedded onUsePatient={bindPatient} />
+
+          {activePatient ? (
+            <div className="border-b border-emerald-200/70 bg-emerald-50/60 px-4 py-2 text-xs text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-100">
+              Chat bound to{" "}
+              <span className="font-semibold">
+                {activePatient.name} ({activePatient.patient_id})
+              </span>
+              <button
+                type="button"
+                onClick={() => setActivePatient(null)}
+                className="ml-3 underline hover:no-underline"
+              >
+                Clear
+              </button>
+            </div>
+          ) : null}
+
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="shrink-0 border-b border-slate-200/70 bg-white/80 px-4 py-2 dark:border-slate-800 dark:bg-slate-950/80 sm:px-6">
+              <div className="mx-auto flex max-w-2xl items-center gap-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-700 text-xs font-semibold text-white">
+                  H
                 </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Clinical command center</p>
+                  <p className="truncate text-xs text-slate-500">{WELCOME}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+              {messages.length === 0 ? (
+                <p className="mx-auto max-w-2xl text-center text-xs text-slate-400">
+                  Start a conversation below, or use patient roulette and example criteria.
+                </p>
               ) : (
                 <div className="mx-auto flex max-w-2xl flex-col gap-4">
                   {messages.map((message, index) => {
@@ -141,42 +262,31 @@ export default function CommandCenter() {
                         >
                           {isUser ? (
                             <p className="whitespace-pre-wrap">{message.content}</p>
+                          ) : message.streaming && !message.content ? (
+                            <p className="text-slate-500">{message.statusText ?? "Thinking…"}</p>
                           ) : (
                             <div className="prose prose-sm max-w-none dark:prose-invert">
-                              <ReactMarkdown>{message.content}</ReactMarkdown>
+                              <ChatMarkdown content={message.content || "…"} />
                             </div>
                           )}
                           {liveTask && !["completed", "failed"].includes(liveTask.status) ? (
-                            <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
-                              <p>Searching cohort… {liveTask.progress_percentage}%</p>
-                              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-amber-100 dark:bg-amber-900/50">
-                                <div
-                                  className="h-full rounded-full bg-amber-500 transition-all duration-300"
-                                  style={{ width: `${liveTask.progress_percentage}%` }}
-                                />
-                              </div>
+                            <div className="mt-3">
+                              <TaskProgressBar
+                                progress={liveTask.progress_percentage}
+                                label="Searching cohort"
+                              />
                             </div>
                           ) : null}
                         </div>
                       </div>
                     );
                   })}
-                  {loading ? (
-                    <div className="flex gap-3">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-700 text-xs font-semibold text-white">
-                        H
-                      </div>
-                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900">
-                        Thinking…
-                      </div>
-                    </div>
-                  ) : null}
                   <div ref={bottomRef} />
                 </div>
               )}
             </div>
 
-            <div className="border-t border-slate-200/70 bg-white/95 px-4 py-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 sm:px-6">
+            <div className="shrink-0 border-t border-slate-200/70 bg-white/95 px-4 py-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 sm:px-6">
               <div className="mx-auto max-w-2xl">
                 {prompts.length ? (
                   <select
@@ -234,12 +344,18 @@ export default function CommandCenter() {
 function friendlyError(err: unknown) {
   if (!(err instanceof Error)) return "Something went wrong. Please try again.";
   const message = err.message;
-  if (/OPENAI_API_KEY|MODEL_API_KEY|Chat agent failed/i.test(message)) {
-    return "Chat is unavailable right now. Check that the server has an API key configured.";
+  if (/rate-limited|429/i.test(message)) {
+    return "The AI provider is temporarily rate-limited. Please wait a minute and try again.";
+  }
+  if (/MODEL_API_KEY|authentication failed|401|403/i.test(message)) {
+    return "Chat is unavailable: the server model API key is missing or invalid.";
   }
   if (/failed to fetch|network/i.test(message)) {
     return "Could not reach the server. Make sure the backend is running.";
   }
+  if (/Chat agent failed \(HTTP/i.test(message)) {
+    return message.replace(/^Chat agent failed \(HTTP \d+\)\.$/, "The chat agent failed. Please try again.");
+  }
   if (message.startsWith("{")) return "Something went wrong. Please try again.";
-  return message.length > 180 ? "Something went wrong. Please try again." : message;
+  return message.length > 220 ? "Something went wrong. Please try again." : message;
 }

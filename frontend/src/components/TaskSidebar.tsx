@@ -58,7 +58,7 @@ export default function TaskSidebar({ tasks, onTasksChange }: Props) {
   }, [onTasksChange]);
 
   return (
-    <aside className="flex max-h-[40vh] flex-col gap-4 overflow-y-auto p-4 lg:max-h-none lg:min-h-[calc(100vh-49px)]">
+    <aside className="flex h-full flex-col gap-4 overflow-y-auto p-4">
       <div>
         <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Recent searches</h2>
         <p className="mt-1 text-xs text-slate-500">Cohort matches appear here after you run a search.</p>
@@ -110,12 +110,20 @@ export default function TaskSidebar({ tasks, onTasksChange }: Props) {
             ) : failed ? (
               <p className="text-xs text-red-600">This search could not be completed.</p>
             ) : (
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
-                <div
-                  className="h-full rounded-full bg-emerald-600 transition-all duration-300"
-                  style={{ width: `${task.progress_percentage}%` }}
-                />
-              </div>
+              <>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                  <div
+                    className="h-full rounded-full bg-emerald-600 transition-all duration-300"
+                    style={{ width: `${task.progress_percentage}%` }}
+                  />
+                </div>
+                <Link
+                  href={`/audit/${task.task_id}`}
+                  className="mt-3 inline-flex text-sm font-medium text-emerald-700 hover:text-emerald-900"
+                >
+                  View progress →
+                </Link>
+              </>
             )}
           </div>
         );
