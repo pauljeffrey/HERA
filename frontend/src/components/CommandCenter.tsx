@@ -1,10 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-import CriteriaRoulette from "@/components/explore/CriteriaRoulette";
-import PatientRoulette from "@/components/explore/PatientRoulette";
 import ChatMarkdown from "@/components/ChatMarkdown";
 import TaskProgressBar from "@/components/TaskProgressBar";
 import TaskSidebar from "@/components/TaskSidebar";
@@ -181,18 +180,31 @@ export default function CommandCenter() {
   return (
     <div className="flex h-[calc(100vh-49px)] overflow-hidden bg-slate-100 dark:bg-slate-950">
       <div className="mx-auto flex h-full w-full max-w-7xl flex-col lg:flex-row">
-        <aside className="max-h-44 w-full shrink-0 overflow-y-auto border-b border-slate-200/70 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 lg:h-full lg:max-h-none lg:w-80 lg:border-b-0 lg:border-r">
-          <TaskSidebar tasks={tasks} onTasksChange={handleTasksChange} />
+        <aside className="w-full shrink-0 overflow-y-auto border-b border-slate-200/70 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 lg:h-full lg:w-80 lg:border-b-0 lg:border-r">
+          <TaskSidebar
+            tasks={tasks}
+            onTasksChange={handleTasksChange}
+            criteriaRouletteOpen={rouletteOpen}
+            onUseCriterion={(text) => insertPrompt(`Help me screen patients with these criteria:\n${text}`)}
+            onUsePatient={bindPatient}
+          />
         </aside>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <CriteriaRoulette
-            embedded
-            defaultOpen={rouletteOpen}
-            onUseCriterion={(text) => insertPrompt(`Help me screen patients with these criteria:\n${text}`)}
-          />
-
-          <PatientRoulette embedded onUsePatient={bindPatient} />
+          <p className="shrink-0 border-b border-sky-200/70 bg-sky-50/90 px-4 py-2 text-xs leading-5 text-sky-950 dark:border-sky-900/40 dark:bg-sky-950/30 dark:text-sky-100 sm:px-6">
+            New here? Read{" "}
+            <Link href="/about" className="font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-900">
+              About
+            </Link>{" "}
+            and{" "}
+            <Link
+              href="/how-to-use"
+              className="font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-900"
+            >
+              How to use
+            </Link>{" "}
+            first. They explain how matching works and how to get the most from HERA.
+          </p>
 
           {activePatient ? (
             <div className="border-b border-emerald-200/70 bg-emerald-50/60 px-4 py-2 text-xs text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-100">
@@ -212,7 +224,7 @@ export default function CommandCenter() {
 
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="shrink-0 border-b border-slate-200/70 bg-white/80 px-4 py-2 dark:border-slate-800 dark:bg-slate-950/80 sm:px-6">
-              <div className="mx-auto flex max-w-2xl items-center gap-3">
+              <div className="flex items-center gap-3">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-700 text-xs font-semibold text-white">
                   H
                 </div>
@@ -225,11 +237,11 @@ export default function CommandCenter() {
 
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
               {messages.length === 0 ? (
-                <p className="mx-auto max-w-2xl text-center text-xs text-slate-400">
-                  Start a conversation below, or use patient roulette and example criteria.
+                <p className="text-center text-xs text-slate-400">
+                  Start a conversation below, or use the roulettes in the sidebar.
                 </p>
               ) : (
-                <div className="mx-auto flex max-w-2xl flex-col gap-4">
+                <div className="flex flex-col gap-4">
                   {messages.map((message, index) => {
                     const liveTask = taskProgress(message.taskId);
                     const isUser = message.role === "user";
@@ -277,7 +289,7 @@ export default function CommandCenter() {
             </div>
 
             <div className="shrink-0 border-t border-slate-200/70 bg-white/95 px-4 py-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 sm:px-6">
-              <div className="mx-auto max-w-2xl">
+              <div>
                 {prompts.length ? (
                   <select
                     className="mb-3 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"

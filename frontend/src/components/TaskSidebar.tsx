@@ -3,14 +3,25 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
-import { fetchTaskStatus, saveTrackedTasks, type TrackedTask } from "@/lib/api";
+import CriteriaRoulette from "@/components/explore/CriteriaRoulette";
+import PatientRoulette from "@/components/explore/PatientRoulette";
+import { fetchTaskStatus, saveTrackedTasks, type PatientBiodata, type TrackedTask } from "@/lib/api";
 
 type Props = {
   tasks: TrackedTask[];
   onTasksChange?: (tasks: TrackedTask[]) => void;
+  criteriaRouletteOpen?: boolean;
+  onUseCriterion?: (text: string) => void;
+  onUsePatient?: (patient: PatientBiodata) => void;
 };
 
-export default function TaskSidebar({ tasks, onTasksChange }: Props) {
+export default function TaskSidebar({
+  tasks,
+  onTasksChange,
+  criteriaRouletteOpen = false,
+  onUseCriterion,
+  onUsePatient,
+}: Props) {
   const [liveTasks, setLiveTasks] = useState(tasks);
   const tasksRef = useRef(tasks);
 
@@ -58,8 +69,16 @@ export default function TaskSidebar({ tasks, onTasksChange }: Props) {
   }, [onTasksChange]);
 
   return (
-    <aside className="flex h-full flex-col gap-4 overflow-y-auto p-4">
-      <div>
+    <aside className="flex h-full flex-col gap-3 overflow-y-auto p-4">
+      <CriteriaRoulette
+        embedded
+        inSidebar
+        defaultOpen={criteriaRouletteOpen}
+        onUseCriterion={onUseCriterion}
+      />
+      <PatientRoulette embedded inSidebar onUsePatient={onUsePatient} />
+
+      <div className="pt-1">
         <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Recent searches</h2>
         <p className="mt-1 text-xs text-slate-500">Cohort matches appear here after you run a search.</p>
       </div>

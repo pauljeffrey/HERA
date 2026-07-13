@@ -8,12 +8,14 @@ const SPIN_FRAMES = ["🎲", "🧬", "📋", "🔬", "⚕️"];
 
 type Props = {
   embedded?: boolean;
+  inSidebar?: boolean;
   defaultOpen?: boolean;
   onUseCriterion?: (text: string) => void;
 };
 
 export default function CriteriaRoulette({
   embedded = false,
+  inSidebar = false,
   defaultOpen = false,
   onUseCriterion,
 }: Props) {
@@ -50,7 +52,7 @@ export default function CriteriaRoulette({
   }
 
   const panel = (
-    <div className={embedded ? "px-4 pb-4 pt-1" : "mx-auto max-w-3xl p-6"}>
+    <div className={embedded ? (inSidebar ? "pb-2 pt-1" : "px-4 pb-4 pt-1") : "mx-auto max-w-3xl p-6"}>
       <div
         className={
           embedded
@@ -101,16 +103,22 @@ export default function CriteriaRoulette({
 
   if (embedded) {
     return (
-      <section className="border-b border-slate-200/70 bg-white/70 dark:border-slate-800 dark:bg-slate-950/40">
+      <section
+        className={
+          inSidebar
+            ? "rounded-xl border border-slate-200/60 bg-white dark:border-slate-800 dark:bg-slate-900/70"
+            : "border-b border-slate-200/70 bg-white/70 dark:border-slate-800 dark:bg-slate-950/40"
+        }
+      >
         <button
           type="button"
           onClick={() => setOpen((value) => !value)}
-          className="flex w-full items-center justify-between px-4 py-3 text-left"
+          className={`flex w-full items-center justify-between text-left ${inSidebar ? "px-3 py-2.5" : "px-4 py-3"}`}
         >
           <span className="text-sm font-medium text-slate-800 dark:text-slate-100">Criteria roulette</span>
           <span className="text-xs text-slate-500">{open ? "Hide" : "Show"}</span>
         </button>
-        {open ? panel : null}
+        {open ? <div className={inSidebar ? "px-3 pb-3" : undefined}>{panel}</div> : null}
       </section>
     );
   }

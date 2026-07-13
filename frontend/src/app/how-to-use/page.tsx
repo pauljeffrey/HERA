@@ -19,17 +19,19 @@ export default function HowToUsePage() {
         </InfoStep>
 
         <InfoStep step={2} title="Pick a patient to explore">
-          Expand <strong>Patient roulette</strong> and click <strong>Draw patient</strong>. You will see
-          their name, ID, age, sex, specialty, and encounter count. Hit <strong>Discuss this patient</strong>{" "}
-          to bind that patient to your chat — then ask about meds, labs, trends, or eligibility.
+          In the left sidebar, expand <strong>Patient roulette</strong> and click <strong>Draw patient</strong>.
+          You will see their name, ID, age, sex, specialty, and encounter count. Hit{" "}
+          <strong>Discuss this patient</strong> to bind that patient to your chat — then ask about meds, labs,
+          trends, or eligibility.
         </InfoStep>
 
         <InfoStep step={3} title="Run a trial search">
-          Paste inclusion and exclusion rules (e.g. LVEF ≤ 35%, age 18–80). Not sure where to start? Expand{" "}
-          <strong>Criteria roulette</strong> and click <strong>Draw criterion</strong> for a random example
-          you can use as-is or adapt — then hit <strong>Use in conversation</strong> to drop it into the
-          chat. HERA parses your rules, starts a background search, and gives you an audit link. Watch the
-          progress bar in chat or open the audit dashboard from <strong>Recent searches</strong> on the left.
+          Paste inclusion and exclusion rules (e.g. LVEF ≤ 35%, age 18–80). Not sure where to start? In the
+          sidebar, expand <strong>Criteria roulette</strong> and click <strong>Draw criterion</strong> for a
+          random example you can use as-is or adapt — then hit <strong>Use in conversation</strong> to drop it
+          into the chat. HERA parses your rules, starts a background search, and gives you an audit link.
+          Watch the progress bar in chat or open the audit dashboard from <strong>Recent searches</strong> below
+          the roulettes.
         </InfoStep>
 
         <InfoStep step={4} title="Review the audit dashboard">
